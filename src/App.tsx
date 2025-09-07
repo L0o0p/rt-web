@@ -18,6 +18,13 @@ function App() {
   const speechSegmentsRef = useRef<Float32Array[]>([]);
   const currentSpeechDataRef = useRef<Float32Array[]>([]);
   const isCollectingRef = useRef<boolean>(false);
+  
+  // 音频数据缓冲区
+  const audioDataBufferRef = useRef<Float32Array[]>([]);
+  const recordedAudioDataRef = useRef<any[]>([]);
+  
+  // 传输定时器
+  const transmissionTimerRef = useRef<number | null>(null);
 
   // 获取RealTime实例中的AudioManager
   const audioManagerRef = useRef<AudioManager | null>(null);
@@ -66,11 +73,29 @@ function App() {
 
     // 监听原始音频数据，用于外部收集
     audioManagerRef.current.on('audio:data', (audioData) => {
+      // 始终保存录制的音频数据用于回放
+      if (speaking) {
+        recordedAudioDataRef.current.push({
+          data: audioData,
+          timestamp: Date.now()
+        });
+      }
+      
+      // 只有当VAD检测到语音活动且WebSocket连接时，才添加到传输缓冲区
       if (isCollectingRef.current) {
         // 创建副本并添加到当前收集中
         const audioCopy = new Float32Array(audioData);
         currentSpeechDataRef.current.push(audioCopy);
         console.log('[APP EXTERNAL] Collected audio chunk, total chunks:', currentSpeechDataRef.current.length);
+        
+        // 同时添加到传输缓冲区
+        audioDataBufferRef.current.push(audioCopy);
+        
+        // 控制缓冲区大小
+        const MAX_BUFFER_SIZE = 5;
+        while (audioDataBufferRef.current.length > MAX_BUFFER_SIZE) {
+          audioDataBufferRef.current.shift();
+        }
       }
     });
 
@@ -93,6 +118,9 @@ function App() {
     return () => {
       // 清理事件监听器
       audioManagerRef.current?.removeAllListeners();
+      
+      // 停止音频传输
+      stopAudioTransmission();
     };
   }, []);
 
@@ -102,8 +130,14 @@ function App() {
   const speak = () => {
     if (speaking) {
       realTime.stop();
+      stopAudioTransmission();
     } else {
+      // 清空之前录制的数据
+      recordedAudioDataRef.current = [];
+      audioDataBufferRef.current = [];
+      
       realTime.speak();
+      startAudioTransmission();
     }
     const newSpeaking = !speaking;
     setSpeaking(newSpeaking);
@@ -111,9 +145,28 @@ function App() {
   }
 
   const play = () => {
-    realTime.playRecordedAudio()
+    realTime.playRecordedAudio(recordedAudioDataRef.current)
   }
 
+  // 音频传输控制
+  const startAudioTransmission = () => {
+    if (transmissionTimerRef.current) {
+      return;
+    }
+    
+    // 计时分片传输
+    transmissionTimerRef.current = window.setInterval(async () => {
+      await realTime.transmitAudioData(audioDataBufferRef.current);
+    }, 100); // 使用固定的100ms间隔
+  };
+  
+  const stopAudioTransmission = () => {
+    if (transmissionTimerRef.current) {
+      window.clearInterval(transmissionTimerRef.current);
+      transmissionTimerRef.current = null;
+    }
+  };
+  
   // 合并外部收集的音频数据
   const combineCollectedAudio = (): Float32Array => {
     if (currentSpeechDataRef.current.length === 0) {

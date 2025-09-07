@@ -1,4 +1,3 @@
-import { CONFIG } from './types/protocol.js';
 import { AudioManager } from "./audio/AudioManager";
 import { AudioPlayer } from "./audio/AudioPlayer";
 import { WebSocketManager } from "./connection/WebSocketManager";
@@ -9,8 +8,6 @@ export class RealTime {
     private websocketManager = new WebSocketManager();
     private audioManager = new AudioManager();
     private audioPlayer = new AudioPlayer();
-    private audioDataBuffer: Float32Array[] = [];
-    private recordedAudioData: any[] = []; // 存储录制的音频数据
     // private recordingTimer: number | null = null;
     private transmissionTimer: number | null = null;
 
@@ -19,7 +16,7 @@ export class RealTime {
         this.audioManager.on('speech:start', () => {
             console.log('Speech started');
         });
-        
+
         this.audioManager.on('speech:end', (speechAudio: Float32Array) => {
             console.log('Speech ended');
         });
@@ -39,17 +36,11 @@ export class RealTime {
     }
 
     speak = async () => {
-        // 清空之前录制的数据
-        this.recordedAudioData = [];
-        
         // 启用VAD
         this.audioManager.configure({ enabled: true });
-        
+
         // 开始VAD音频处理
         await this.audioManager.start();
-        
-        // 开始传输音频数据
-        this.startAudioTransmission();
     }
 
     stop = () => {
@@ -58,23 +49,9 @@ export class RealTime {
 
     // 处理实时音频数据
     private handleRealtimeAudioData(audioData: Float32Array, vadResult: VADResult): void {
-        // 始终保存录制的音频数据用于回放
-        this.recordedAudioData.push({
-            data: audioData,
-            timestamp: Date.now()
-        });
-        
-        // 只有当VAD检测到语音活动且WebSocket连接时，才添加到传输缓冲区
-        // 注意：这里的VAD检测逻辑需要根据AudioManager的实际实现进行调整
-        if (this.websocketManager.isConnected) {
-            this.audioDataBuffer.push(audioData);
-
-            // 控制缓冲区大小
-            const MAX_BUFFER_SIZE = 5;
-            while (this.audioDataBuffer.length > MAX_BUFFER_SIZE) {
-                this.audioDataBuffer.shift();
-            }
-        }
+        // 这个方法现在由应用层处理音频数据
+        // 我们可以在这里添加回调机制，让应用层决定如何处理音频数据
+        console.log('RealTime SDK: Received audio data, length:', audioData.length);
     }
 
     // // 启动录音计时器
@@ -84,21 +61,21 @@ export class RealTime {
     //     }, 100);
     // }
 
-    private startAudioTransmission(): void {
+    public startAudioTransmission(audioDataBuffer: Float32Array[]): void {
         if (this.transmissionTimer) {
             return;
         }
         // 计时分片传输
         this.transmissionTimer = window.setInterval(async () => {
-            await this.transmitAudioData();
+            await this.transmitAudioData(audioDataBuffer);
         }, 100); // 使用固定的100ms间隔，或者从CONFIG中获取合适的值
 
     }
-    
+
     // 播放录制的音频
-    playRecordedAudio = async () => {
-        console.log("播放录制的音频，共", this.recordedAudioData.length, "段");
-        if (this.recordedAudioData.length > 0) {
+    playRecordedAudio = async (recordedAudioData: any[]) => {
+        console.log("播放录制的音频，共", recordedAudioData.length, "段");
+        if (recordedAudioData.length > 0) {
             try {
                 // 使用AudioPlayer播放录制的音频
                 // 注意：这里需要根据AudioPlayer的实际接口进行调整
@@ -112,8 +89,8 @@ export class RealTime {
     }
 
     // 传输音频数据 （从内存获取、切片）
-    private async transmitAudioData(): Promise<void> {
-        if (this.audioDataBuffer.length > 0 && this.websocketManager.isConnected) {
+    public async transmitAudioData(audioDataBuffer: Float32Array[]): Promise<void> {
+        if (audioDataBuffer.length > 0 && this.websocketManager.isConnected) {
             // 检查会话状态，如果会话未创建则不发送数据
             if (!this.websocketManager.isSessionCreated) {
                 console.log('实时传输: 会话未创建，暂不发送数据');
@@ -128,7 +105,7 @@ export class RealTime {
             }
 
             // 从缓冲区中取出一块数据进行发送
-            const audioChunk = this.audioDataBuffer.shift();
+            const audioChunk = audioDataBuffer.shift();
             if (!audioChunk) {
                 return;
             }
@@ -140,7 +117,7 @@ export class RealTime {
                 dataToSend = audioChunk.slice(0, 60);
                 // 将剩余部分放回缓冲区
                 if (audioChunk.length > 60) {
-                    this.audioDataBuffer.unshift(audioChunk.slice(60));
+                    audioDataBuffer.unshift(audioChunk.slice(60));
                 }
             } else {
                 // 数据块大小合适，直接使用

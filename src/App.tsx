@@ -17,6 +17,24 @@ function App() {
   const [speechDetected, setSpeechDetected] = useState(false);
   const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
+  
+  // 会话配置状态
+  const [sessionConfig, setSessionConfig] = useState({
+    mode: 'vad',
+    vad_threshold: 0.5,
+    silence_duration_ms: 500,
+    min_speech_duration_ms: 200,
+    asr_language: 'zh',
+    timezone: 'Asia/Shanghai',
+    location: '中国',
+    system_prompt: '你是一个语音AI助手...',
+    enable_search: true,
+    signal_only: true,
+    text_done_signal_only: false,
+    initial_burst_count: 10,
+    initial_burst_delay_ms: 5,
+    send_rate_multiplier: 1.0
+  });
 
   // VAD音频片段存储
   const speechSegmentsRef = useRef<Float32Array[]>([]);
@@ -269,6 +287,18 @@ function App() {
   const connect = () => {
     realTime.connectToServer()
   }
+  
+  const startSession = () => {
+    realTime.startSession(sessionConfig)
+  }
+  
+  // 更新会话配置的处理函数
+  const handleConfigChange = (field: string, value: string | boolean | number) => {
+    setSessionConfig(prev => ({
+      ...prev,
+      [field]: value
+    }))
+  }
   const speak = () => {
     if (speaking) {
       realTime.stop();
@@ -510,12 +540,182 @@ function App() {
 
         {/* 原有的按钮 */}
         <button className={styles.connect} onClick={connect}>connect</button>
+        <button className={styles.connect} onClick={startSession}>开始会话</button>
         <button className={speaking ? styles.stop : styles.speak} onClick={speak}>speak</button>
         <button className={styles.play} onClick={play}>播放录音</button>
         <button className={styles.play} onClick={playVadAudio}>播放VAD音频</button>
 
         <hr />
-
+        
+        {/* 会话配置面板 */}
+        <h2>会话配置</h2>
+        
+        <div>
+          <label>
+            VAD阈值:
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={sessionConfig.vad_threshold}
+              onChange={(e) => handleConfigChange('vad_threshold', parseFloat(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            静默持续时间 (ms):
+            <input
+              type="number"
+              value={sessionConfig.silence_duration_ms}
+              onChange={(e) => handleConfigChange('silence_duration_ms', parseInt(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            最小语音持续时间 (ms):
+            <input
+              type="number"
+              value={sessionConfig.min_speech_duration_ms}
+              onChange={(e) => handleConfigChange('min_speech_duration_ms', parseInt(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        
+        <div>
+          <label>
+            初始突发计数:
+            <input
+              type="number"
+              value={sessionConfig.initial_burst_count}
+              onChange={(e) => handleConfigChange('initial_burst_count', parseInt(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            初始突发延迟 (ms):
+            <input
+              type="number"
+              value={sessionConfig.initial_burst_delay_ms}
+              onChange={(e) => handleConfigChange('initial_burst_delay_ms', parseInt(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            发送速率乘数:
+            <input
+              type="number"
+              step="0.1"
+              value={sessionConfig.send_rate_multiplier}
+              onChange={(e) => handleConfigChange('send_rate_multiplier', parseFloat(e.target.value))}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            模式:
+            <select
+              value={sessionConfig.mode}
+              onChange={(e) => handleConfigChange('mode', e.target.value)}
+            >
+              <option value="vad">VAD</option>
+              <option value="continuous">连续</option>
+              <option value="manual">手动</option>
+            </select>
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            ASR语言:
+            <select
+              value={sessionConfig.asr_language}
+              onChange={(e) => handleConfigChange('asr_language', e.target.value)}
+            >
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+            </select>
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            时区:
+            <input
+              type="text"
+              value={sessionConfig.timezone}
+              onChange={(e) => handleConfigChange('timezone', e.target.value)}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            位置:
+            <input
+              type="text"
+              value={sessionConfig.location}
+              onChange={(e) => handleConfigChange('location', e.target.value)}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            系统提示:
+            <textarea
+              value={sessionConfig.system_prompt}
+              onChange={(e) => handleConfigChange('system_prompt', e.target.value)}
+            />
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={sessionConfig.enable_search}
+              onChange={(e) => handleConfigChange('enable_search', e.target.checked)}
+            />
+            启用搜索
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={sessionConfig.signal_only}
+              onChange={(e) => handleConfigChange('signal_only', e.target.checked)}
+            />
+            仅信号模式
+          </label>
+        </div>
+        
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={sessionConfig.text_done_signal_only}
+              onChange={(e) => handleConfigChange('text_done_signal_only', e.target.checked)}
+            />
+            文本完成仅信号
+          </label>
+        </div>
+        
+       
+        <hr />
+        
         {/* VAD控制面板 */}
         <h2>VAD 控制面板</h2>
 

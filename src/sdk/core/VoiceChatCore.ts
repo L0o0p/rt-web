@@ -144,7 +144,7 @@ export class VoiceChatCore extends EventEmitter {
   public get currentSessionId(): string | null {
     return this.connectionManager.currentSessionId || null;
   }
-
+  
   /**
    * 设置会话配置
    */
@@ -157,5 +157,17 @@ export class VoiceChatCore extends EventEmitter {
       this.connectionManager.recreateSession(undefined, config);
     }
     // 如果尚未连接，配置将在下次连接时自动使用
+  }
+  
+  /**
+   * 开始新会话
+   */
+  public startSession(config?: Partial<SessionConfigPayload>): void {
+    if (this.isDestroyed) {
+      throw new Error('VoiceChatCore instance has been destroyed');
+    }
+    
+    // 重新创建会话
+    this.connectionManager.recreateSession(undefined, config);
   }
 }

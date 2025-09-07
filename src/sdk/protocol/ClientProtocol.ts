@@ -139,7 +139,6 @@ export interface SessionConfigPayload {
     asr_language?: string;
     timezone?: string;
     location?: string;
-    audio_chunk_size_kb?: number;
     initial_burst_count?: number;
     initial_burst_delay_ms?: number;
     send_rate_multiplier?: number;

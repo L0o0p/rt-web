@@ -30,6 +30,10 @@ export class RealTime {
     setSessionConfig(config: Partial<SessionConfigPayload>): void {
         this.voiceChatCore.setSessionConfig(config);
     }
+    
+    startSession(config?: Partial<SessionConfigPayload>): void {
+        this.voiceChatCore.startSession(config);
+    }
 
     connectToServer = async () => {
         await this.voiceChatCore.connect();

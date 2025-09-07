@@ -7,6 +7,7 @@ export const ProtocolId = {
     Asr: 1,
     Llm: 2,
     Tts: 3,
+    Control: 4,
     All: 100,
 } as const;
 
@@ -21,6 +22,7 @@ export const CommandId = {
     AudioChunk: 3,
     TextData: 4,
     StopInput: 5,
+    Ping: 6,
     Result: 100,
     Error: 255,
 } as const;

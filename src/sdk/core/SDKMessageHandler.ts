@@ -1,5 +1,5 @@
-import { Logger } from '../utils/logger.js';
-import { BINARY_MESSAGE } from '../types/protocol.js';
+import type { Logger } from '../audio/Logger';
+import { BINARY_MESSAGE } from '../types/protocol';
 
 interface SDKMessageHandlerEvents {
   onSessionCreated?: (sessionId: string) => void;
@@ -87,10 +87,10 @@ export class SDKMessageHandler {
 
       // 如果还是没有type字段，但有其他有用信息，也要记录
       if (!messageType) {
-        this.logger.warning(`[SDK] ❌ 收到没有type字段的消息，但记录其他信息:`);
-        this.logger.warning(`  ├─ Protocol ID: ${message.protocol_id}`);
-        this.logger.warning(`  ├─ Command ID: ${message.command_id}`);
-        this.logger.warning(`  └─ 完整消息: ${JSON.stringify(message)}`);
+        this.logger.warn(`[SDK] ❌ 收到没有type字段的消息，但记录其他信息:`);
+        this.logger.warn(`  ├─ Protocol ID: ${message.protocol_id}`);
+        this.logger.warn(`  ├─ Command ID: ${message.command_id}`);
+        this.logger.warn(`  └─ 完整消息: ${JSON.stringify(message)}`);
         return;
       }
 
@@ -126,8 +126,8 @@ export class SDKMessageHandler {
           this.handleErrorMessage(actualMessage);
           break;
         default:
-          this.logger.warning(`[SDK] ❓ 未知消息类型: "${messageType}"`);
-          this.logger.warning(`[SDK] 📄 完整消息内容: ${JSON.stringify(actualMessage, null, 2)}`);
+          this.logger.warn(`[SDK] ❓ 未知消息类型: "${messageType}"`);
+          this.logger.warn(`[SDK] 📄 完整消息内容: ${JSON.stringify(actualMessage, null, 2)}`);
       }
     } catch (error) {
       this.logger.error(`[SDK] 处理文本消息时出错: ${error instanceof Error ? error.message : String(error)}`);
@@ -161,7 +161,7 @@ export class SDKMessageHandler {
         // 控制消息响应
         this.logger.info('[SDK] 收到控制消息响应');
       } else {
-        this.logger.warning(`[SDK] 未处理的二进制消息类型 - 协议ID: ${protocolId}, 命令ID: ${commandId}`);
+        this.logger.warn(`[SDK] 未处理的二进制消息类型 - 协议ID: ${protocolId}, 命令ID: ${commandId}`);
       }
     } catch (error) {
       this.logger.error(`[SDK] 处理二进制消息时出错: ${error instanceof Error ? error.message : String(error)}`);
@@ -182,7 +182,7 @@ export class SDKMessageHandler {
         this.events.onSessionCreated(message.session_id);
       }
     } else {
-      this.logger.warning(`[SDK] ❌ 收到会话创建响应但没有session_id`);
+      this.logger.warn(`[SDK] ❌ 收到会话创建响应但没有session_id`);
     }
   }
 
@@ -228,7 +228,7 @@ export class SDKMessageHandler {
       this.logger.debug(`[SDK]    📍 音频信息 - Response ID: ${message.response_id}, Item ID: ${message.item_id}`);
 
       if (message.delta.length === 0) {
-        this.logger.warning('[SDK] ❗️ 收到空的音频数据');
+        this.logger.warn('[SDK] ❗️ 收到空的音频数据');
       }
     }
   }
@@ -266,13 +266,13 @@ export class SDKMessageHandler {
     // 根据错误代码进行特定处理
     switch (errorCode) {
       case 1001:
-        this.logger.warning('[SDK] 💡 建议: 请尝试更大声说话或检查麦克风设置');
+        this.logger.warn('[SDK] 💡 建议: 请尝试更大声说话或检查麦克风设置');
         break;
       case 1002:
-        this.logger.warning('[SDK] 💡 建议: 会话可能已过期，请重新创建会话');
+        this.logger.warn('[SDK] 💡 建议: 会话可能已过期，请重新创建会话');
         break;
       default:
-        this.logger.warning(`[SDK] 💡 请检查系统状态或联系技术支持`);
+        this.logger.warn(`[SDK] 💡 请检查系统状态或联系技术支持`);
     }
   }
 }

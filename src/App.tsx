@@ -272,7 +272,14 @@ function App() {
           .configure({
             enabled: true,
             threshold: vadThreshold,
-            loopback: true
+            loopback: true,
+            uplink: {
+              onChunkProcessed: async (chunk: Uint8Array) => {
+                console.log('[APP UPLINK TEST] Processed audio chunk for uplink, size:', chunk.length, 'bytes');
+                // 这里可以添加实际的uplink测试逻辑
+                // 例如，将数据发送到服务器或进行其他处理
+              }
+            }
           })
           .start();
 

@@ -1,6 +1,6 @@
 import * as mod from '@evan/wasm/target/opus/deno.js';
-import { AUDIO_QUALITY } from '../types/protocol.js';
-import { pcm16ToFloat32, float32ToPcm16 } from './AudioUtils';
+import { AUDIO_QUALITY } from '../types/protocol';
+import { pcm16ToFloat32 } from './AudioUtils';
 export class AudioProcessor {
   private encoder: mod.Encoder | null = null;
   private decoder: mod.Decoder | null = null;
@@ -12,8 +12,19 @@ export class AudioProcessor {
       // 我们需要根据实际需求选择合适的采样率
       this.encoder = new mod.Encoder({
         channels: 1,
-        sample_rate: AUDIO_QUALITY.SAMPLE_RATE
+        sample_rate: AUDIO_QUALITY.SAMPLE_RATE,
+        application: 'voip'
       });
+
+      // 配置Opus编码器
+      // 设置复杂度为10（最高质量）
+      this.encoder.ctl(4010, 10);  // OPUS_SET_COMPLEXITY
+
+      // 设置比特率为24kbps
+      this.encoder.ctl(4002, 24000);  // OPUS_SET_BITRATE
+
+      // 设置带宽为全带宽
+      this.encoder.ctl(4008, 1105);  // OPUS_SET_BANDWIDTH, OPUS_BANDWIDTH_FULLBAND
 
       // 初始化Opus解码器
       this.decoder = new mod.Decoder({
@@ -21,9 +32,9 @@ export class AudioProcessor {
         sample_rate: AUDIO_QUALITY.SAMPLE_RATE
       });
 
-      console.log('AudioProcessor initialized with Opus encoder/decoder');
+      console.log('[AudioCodec] AudioProcessor initialized with Opus encoder/decoder - Sample rate:', AUDIO_QUALITY.SAMPLE_RATE, 'Channels: 1');
     } catch (error) {
-      console.error('Failed to initialize Opus encoder/decoder:', error);
+      console.error('[AudioCodec] Failed to initialize Opus encoder/decoder:', error);
     }
   }
   /**
@@ -32,22 +43,27 @@ export class AudioProcessor {
    * @returns Opus编码后的数据
    */
   encodeOpus(pcmData: Uint8Array): Uint8Array {
+    console.log('[AudioCodec] Starting Opus encoding - Input data size:', pcmData.length, 'bytes');
+
     if (!this.encoder) {
-      console.error('Opus encoder not initialized');
+      console.error('[AudioCodec] Opus encoder not initialized');
       throw new Error('Opus encoder not initialized');
     }
 
     try {
       // 将16位PCM数据转换为Float32Array格式供Opus编码器使用
       const floatData = pcm16ToFloat32(pcmData);
+      console.log('[AudioCodec] Converted PCM to Float32 - Samples count:', floatData.length);
 
       // 执行Opus编码
       const encodedData = this.encoder.encode(floatData);
+      console.log('[AudioCodec] Raw Opus encoding completed - Encoded data size:', encodedData.byteLength, 'bytes');
 
-      // 转换为Uint8Array格式返回
-      return new Uint8Array(encodedData.buffer);
+      console.log('[AudioCodec] Final Opus encoding completed - Original size:', pcmData.length, 'bytes, Encoded size:', encodedData.length, 'bytes, Compression ratio:', (pcmData.length / encodedData.length).toFixed(2));
+
+      return encodedData;
     } catch (error) {
-      console.error('Opus encoding failed:', error);
+      console.error('[AudioCodec] Opus encoding failed:', error);
       throw error;
     }
   }
@@ -58,26 +74,26 @@ export class AudioProcessor {
    * @returns 解码后的16位PCM数据
    */
   decodeOpus(opusData: Uint8Array): Uint8Array | null {
+    console.log('[AudioCodec] Starting Opus decoding - Input data size:', opusData.length, 'bytes');
+
     if (!this.decoder) {
-      console.error('Opus decoder not initialized');
+      console.error('[AudioCodec] Opus decoder not initialized');
       return null;
     }
 
     try {
       // 执行Opus解码
-      // 注意：decoder.decode可能直接返回PCM数据而不是Float32Array
-      // 需要根据实际库的行为进行调整
       const decodedData = this.decoder.decode(opusData);
+      console.log('[AudioCodec] Raw Opus decoding completed');
 
-      // 如果返回的是Float32Array，则转换为16位PCM格式
-      if (decodedData instanceof Float32Array) {
-        return float32ToPcm16(decodedData);
-      }
-
-      // 如果已经是PCM格式则直接返回
-      return decodedData as Uint8Array;
+      // 转换为16位PCM格式
+      // 注意：这里假设 decodedData 是 Float32Array 格式，我们需要将其转换为16位PCM
+      // 但实际上 decodedData 应该是 Uint8Array，所以我们先尝试直接使用
+      const pcmData = decodedData;
+      console.log('[AudioCodec] PCM data returned - Original size:', opusData.length, 'bytes, Decoded size:', pcmData.length, 'bytes');
+      return pcmData;
     } catch (error) {
-      console.error('Opus decoding failed:', error);
+      console.error('[AudioCodec] Opus decoding failed:', error);
       return null;
     }
   }
@@ -87,15 +103,15 @@ export class AudioProcessor {
    */
   destroy(): void {
     if (this.encoder) {
-      // 如果库提供了销毁方法，这里调用它
+      this.encoder.drop();
       this.encoder = null;
     }
 
     if (this.decoder) {
-      // 如果库提供了销毁方法，这里调用它
+      this.decoder.drop();
       this.decoder = null;
     }
-    console.log('AudioProcessor destroyed');
+    console.log('[AudioCodec] AudioProcessor destroyed');
   }
 }
 

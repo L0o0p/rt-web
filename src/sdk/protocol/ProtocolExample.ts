@@ -6,9 +6,9 @@ import {
     CommandId,
     type TextDataPayload,
     type SessionConfigPayload
-} from './ClientProtocol.js';
+} from './ClientProtocol';
 
-import { BinaryMessage } from './BinaryMessage.js';
+import { BinaryMessage } from './BinaryMessage';
 
 /**
  * 创建一个文本数据消息的示例

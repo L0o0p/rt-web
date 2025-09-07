@@ -3,7 +3,7 @@ import {
     createSessionConfigMessageExample,
     parseWebSocketMessageExample,
     createBinaryMessageExample
-} from './ProtocolExample.js';
+} from './ProtocolExample';
 
 console.log("=== WebSocket 消息示例 ===");
 

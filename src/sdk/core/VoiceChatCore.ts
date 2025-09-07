@@ -1,8 +1,7 @@
-import { WebSocketManager } from '../connection/WebSocketManager.js';
-import { Logger } from '../utils/logger.js';
-import { BinaryMessage } from '../protocol/BinaryMessage.js';
-import { CONFIG, BINARY_MESSAGE } from '../types/protocol.js';
-import { SDKMessageHandler } from './SDKMessageHandler.js';
+import { WebSocketManager } from '../connection/WebSocketManager';
+import { Logger } from '../audio/Logger';
+import { BinaryMessage } from '../protocol/BinaryMessage';
+import { SDKMessageHandler } from './SDKMessageHandler';
 
 interface VoiceChatCoreEvents {
   onSessionCreated?: (sessionId: string) => void;
@@ -119,17 +118,17 @@ export class VoiceChatCore {
    */
   public sendAudioData(audioData: Float32Array): boolean {
     if (this.isDestroyed) {
-      this.logger.warning('尝试向已销毁的实例发送音频数据');
+      this.logger.warn('尝试向已销毁的实例发送音频数据');
       return false;
     }
 
     if (!this.websocketManager.isConnected) {
-      this.logger.warning('WebSocket未连接，无法发送音频数据');
+      this.logger.warn('WebSocket未连接，无法发送音频数据');
       return false;
     }
 
     if (!this.websocketManager.isSessionCreated) {
-      this.logger.warning('会话未创建，无法发送音频数据');
+      this.logger.warn('会话未创建，无法发送音频数据');
       // 尝试重新创建会话
       this.websocketManager.recreateSession();
       return false;
@@ -139,7 +138,7 @@ export class VoiceChatCore {
       // 获取会话ID
       const sessionId = this.websocketManager.currentSessionId;
       if (!sessionId) {
-        this.logger.warning('会话ID缺失，无法发送音频数据');
+        this.logger.warn('会话ID缺失，无法发送音频数据');
         return false;
       }
 

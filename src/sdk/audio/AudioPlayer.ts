@@ -1,5 +1,5 @@
-import { AUDIO_QUALITY } from '../types/protocol.js';
-import { pcm16ToFloat32 } from './AudioUtils.js';
+import { AUDIO_QUALITY } from '../types/protocol';
+import { pcm16ToFloat32 } from './AudioUtils';
 
 export class AudioPlayer {
     private audioContext: AudioContext | null = null;

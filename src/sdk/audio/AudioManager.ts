@@ -265,6 +265,7 @@ export class AudioManager extends EventEmitter {
 
         // 音频上传处理
         if (this.moduleConfig.uplink && this.chunker) {
+            console.log('[AudioManager] Sending audio data to uplink chunker, data size:', audioData.length, 'bytes');
             this.chunker.addAudioData(audioData);
         }
     }
@@ -295,10 +296,20 @@ export class AudioManager extends EventEmitter {
      */
     private startUplink(config: NonNullable<AudioModuleConfig['uplink']>): void {
         if (!this.chunker) {
+            const encodeOpus = config.encoderType !== 'pcm'; // 默认使用opus编码，除非明确指定pcm
+            const chunkSize = config.chunkSize || AUDIO_QUALITY.FIXED_CHUNK_SIZE;
+            
+            console.log('[AudioManager] Starting audio uplink with configuration:', {
+                encoderType: config.encoderType || 'opus', // 默认显示opus
+                encodeOpus: encodeOpus,
+                chunkSize: chunkSize,
+                hasChunkProcessor: !!config.onChunkProcessed
+            });
+            
             this.chunker = new AudioChunker(
                 config.onChunkProcessed,
-                config.chunkSize || AUDIO_QUALITY.FIXED_CHUNK_SIZE,
-                config.encoderType === 'opus'
+                chunkSize,
+                encodeOpus
             );
             logger.info('Audio uplink started');
         }

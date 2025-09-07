@@ -1,9 +1,11 @@
+/// <reference lib="webworker" />
+
 // Simple AudioWorklet processor for processing audio at 16kHz with volume gain
 class ResamplerProcessor extends AudioWorkletProcessor {
     gain: number;
     channelId: number;
 
-    constructor(options: any) {
+    constructor(options?: AudioWorkletNodeOptions) {
         super();
         // Get gain from processor options, default to 1.0 (no change)
         this.gain = options?.processorOptions?.gain ?? 1.0;
@@ -11,7 +13,7 @@ class ResamplerProcessor extends AudioWorkletProcessor {
         this.channelId = options?.processorOptions?.channelId ?? 0;
     }
 
-    process(inputs: Float32Array[][], _outputs: Float32Array[][], _parameters: any) {
+    override process(inputs: Float32Array[][], _outputs: Float32Array[][], _parameters: any) {
         const input = inputs[0];
         if (!input || !input[0]) {
             return true;
@@ -47,5 +49,4 @@ class ResamplerProcessor extends AudioWorkletProcessor {
 }
 
 // 注册处理器
-//@ts-ignore
 registerProcessor('resampler-processor', ResamplerProcessor);

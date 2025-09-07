@@ -1,23 +1,24 @@
 import { AudioManager } from "./audio/AudioManager";
-import { AudioPlayer } from "./audio/AudioPlayer";
 import { WebSocketManager } from "./connection/WebSocketManager";
-import type { VADResult } from "./types/protocol";
 import { BinaryMessage } from './protocol/BinaryMessage';
+import { Logger } from './audio/Logger';
 
 export class RealTime {
-    private websocketManager = new WebSocketManager();
+    private websocketManager: WebSocketManager;
     private audioManager = new AudioManager();
-    private audioPlayer = new AudioPlayer();
     // private recordingTimer: number | null = null;
     private transmissionTimer: number | null = null;
 
     constructor() {
+        // 初始化 WebSocketManager
+        this.websocketManager = new WebSocketManager(new Logger({ prefix: 'RealTime' }));
+        
         // 设置VAD事件回调
         this.audioManager.on('speech:start', () => {
             console.log('Speech started');
         });
 
-        this.audioManager.on('speech:end', (speechAudio: Float32Array) => {
+        this.audioManager.on('speech:end', () => {
             console.log('Speech ended');
         });
     }
@@ -45,13 +46,6 @@ export class RealTime {
 
     stop = () => {
         this.audioManager.stop();
-    }
-
-    // 处理实时音频数据
-    private handleRealtimeAudioData(audioData: Float32Array, vadResult: VADResult): void {
-        // 这个方法现在由应用层处理音频数据
-        // 我们可以在这里添加回调机制，让应用层决定如何处理音频数据
-        console.log('RealTime SDK: Received audio data, length:', audioData.length);
     }
 
     // // 启动录音计时器

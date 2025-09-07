@@ -1,4 +1,4 @@
-import { BinaryHeader as ClientBinaryHeader, ProtocolId, CommandId } from './ClientProtocol.js';
+import { BinaryHeader as ClientBinaryHeader, ProtocolId, CommandId } from './ClientProtocol';
 
 /**
  * 二进制协议头部 (继承自客户端协议定义)
@@ -34,6 +34,14 @@ export class BinaryMessage {
      */
     static createStartSession(sessionId: string, protocolId: ProtocolId): BinaryMessage {
         const header = new BinaryHeader(sessionId, protocolId, CommandId.Start);
+        return new BinaryMessage(header, new Uint8Array(0));
+    }
+
+    /**
+     * 创建Ping二进制消息
+     */
+    static createPing(sessionId: string): BinaryMessage {
+        const header = new BinaryHeader(sessionId, ProtocolId.Control, CommandId.Ping);
         return new BinaryMessage(header, new Uint8Array(0));
     }
 

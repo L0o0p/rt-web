@@ -1,6 +1,6 @@
-import { CONFIG } from '../types/protocol.js';
-// import { Logger } from '../utils/logger.js';
-import { BinaryMessage } from '../protocol/BinaryMessage.js';
+import { CONFIG } from '../types/protocol';
+import { Logger } from '../audio/Logger';
+import { BinaryMessage } from '../protocol/BinaryMessage';
 
 export interface WebSocketEventHandlers {
     onOpen?: (event: Event) => void;
@@ -11,7 +11,7 @@ export interface WebSocketEventHandlers {
 
 export class WebSocketManager {
     private websocket: WebSocket | null = null;
-    // private logger: Logger;
+    private logger: Logger;
     private connectionAttempts: number = 0;
     private reconnectTimeout: number | null = null;
     private heartbeatInterval: number | null = null;
@@ -21,10 +21,8 @@ export class WebSocketManager {
     private packetLossStats = { sent: 0, acked: 0 };
     private bandwidthStats = { bytesSent: 0, startTime: null as number | null };
 
-    constructor(
-        // logger: Logger
-    ) {
-        // this.logger = logger;
+    constructor(logger: Logger) {
+        this.logger = logger;
     }
 
     // 连接到WebSocket服务器
@@ -197,7 +195,7 @@ export class WebSocketManager {
             // 设置5秒超时检查是否收到响应
             setTimeout(() => {
                 if (!this.sessionCreated) {
-                    // this.logger.warning('⚠️ 5秒内未收到会话创建响应');
+                    // this.logger.warn('⚠️ 5秒内未收到会话创建响应');
                 }
             }, 5000);
         } else {

@@ -10,6 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@evan/opus": "^1.0.3",
+    "@evan/wasm": "^0.0.95",
+    "@ricky0123/vad-web": "^0.0.27",
+    "@steelbrain/media-ingest-audio": "^1.2.0",
+    "@steelbrain/media-speech-detection-web": "^1.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

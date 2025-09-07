@@ -67,3 +67,20 @@ export default tseslint.config([
   },
 ])
 ```
+
+## SDK协议实现
+
+本项目实现了与服务端通信的WebSocket协议和二进制协议。
+
+### 主要文件
+
+- `src/sdk/protocol/ClientProtocol.ts`: 客户端协议定义，包括协议ID、命令ID和消息载荷类型的定义，以及构建和解析消息的工具函数。
+- `src/sdk/protocol/BinaryMessage.ts`: 二进制消息的构建和解析实现。
+- `src/sdk/protocol/ProtocolExample.ts`: 使用新协议定义的示例代码。
+
+### 协议特性
+
+- 支持WebSocket JSON格式和二进制格式的消息。
+- 定义了完整的协议ID和命令ID枚举。
+- 提供了丰富的消息载荷类型定义，涵盖客户端发送和服务端发送的各种消息。
+- 包含了构建和解析WebSocket消息及二进制消息的工具函数。

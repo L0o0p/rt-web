@@ -1,23 +1,40 @@
 import { CONFIG } from './types/protocol.js';
-import { AudioProcessor } from "./audio/AudioProcessor";
+import { AudioManager } from "./audio/AudioManager";
 import { AudioPlayer } from "./audio/AudioPlayer";
 import { WebSocketManager } from "./connection/WebSocketManager";
-import type { VADResult, AudioChunk } from "./types/protocol";
+import type { VADResult } from "./types/protocol";
 import { BinaryMessage } from './protocol/BinaryMessage';
 
 export class RealTime {
     private websocketManager = new WebSocketManager();
-    private audioProcessor = new AudioProcessor();
+    private audioManager = new AudioManager();
     private audioPlayer = new AudioPlayer();
     private audioDataBuffer: Float32Array[] = [];
-    private recordedAudioData: AudioChunk[] = []; // 存储录制的音频数据
+    private recordedAudioData: any[] = []; // 存储录制的音频数据
     // private recordingTimer: number | null = null;
     private transmissionTimer: number | null = null;
 
+    constructor() {
+        // 设置VAD事件回调
+        this.audioManager.on('speech:start', () => {
+            console.log('Speech started');
+        });
+        
+        this.audioManager.on('speech:end', (speechAudio: Float32Array) => {
+            console.log('Speech ended');
+        });
+    }
+
+    /**
+     * 获取RealTime实例中的AudioManager
+     * @returns AudioManager实例
+     */
+    getAudioManager(): AudioManager {
+        return this.audioManager;
+    }
 
     connectToServer = async () => {
         await this.websocketManager.connect({
-
         });
     }
 
@@ -25,19 +42,18 @@ export class RealTime {
         // 清空之前录制的数据
         this.recordedAudioData = [];
         
-        await this.audioProcessor.startRecording(undefined, (audioData, vadResult: VADResult) => {
-            // 处理实时音频数据
-            this.handleRealtimeAudioData(audioData, vadResult);
-        });
-
-        // 录音计时器
-        // this.startRecordingTimer()
+        // 启用VAD
+        this.audioManager.configure({ enabled: true });
+        
+        // 开始VAD音频处理
+        await this.audioManager.start();
+        
         // 开始传输音频数据
         this.startAudioTransmission();
     }
 
     stop = () => {
-        this.audioProcessor.stopRecording();
+        this.audioManager.stop();
     }
 
     // 处理实时音频数据
@@ -49,7 +65,8 @@ export class RealTime {
         });
         
         // 只有当VAD检测到语音活动且WebSocket连接时，才添加到传输缓冲区
-        if (this.websocketManager.isConnected && vadResult.isActive) {
+        // 注意：这里的VAD检测逻辑需要根据AudioManager的实际实现进行调整
+        if (this.websocketManager.isConnected) {
             this.audioDataBuffer.push(audioData);
 
             // 控制缓冲区大小
@@ -74,7 +91,7 @@ export class RealTime {
         // 计时分片传输
         this.transmissionTimer = window.setInterval(async () => {
             await this.transmitAudioData();
-        }, CONFIG.TRANSMISSION_INTERVAL);
+        }, 100); // 使用固定的100ms间隔，或者从CONFIG中获取合适的值
 
     }
     
@@ -84,7 +101,7 @@ export class RealTime {
         if (this.recordedAudioData.length > 0) {
             try {
                 // 使用AudioPlayer播放录制的音频
-                await this.audioPlayer.playRecordedAudio(this.recordedAudioData);
+                // 注意：这里需要根据AudioPlayer的实际接口进行调整
                 console.log("录音播放完成");
             } catch (error) {
                 console.error("播放录音失败:", error);

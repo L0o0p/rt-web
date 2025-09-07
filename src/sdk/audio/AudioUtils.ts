@@ -58,3 +58,28 @@ export function float32ToPcm16(floatData: Float32Array): Uint8Array {
 
   return pcmData;
 }
+
+/**
+ * Base64 字符串转 Uint8Array
+ */
+export function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * ArrayBuffer/SharedArrayBuffer 转 Base64 字符串
+ */
+export function arrayBufferToBase64(buffer: ArrayBuffer | SharedArrayBuffer): string {
+  const bytes = new Uint8Array(buffer as ArrayBuffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}

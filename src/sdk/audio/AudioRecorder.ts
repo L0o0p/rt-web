@@ -238,9 +238,26 @@ export class AudioRecorder {
                     int16Data[i] = s * 0x7FFF;
                 }
 
-                // 转换为Uint8Array格式
-                const uint8Data = new Uint8Array(int16Data.buffer);
-                console.log("Converted audio data to Uint8Array with length:", uint8Data.length);
+                // 转换为Uint8Array格式（正确的方式）
+                const uint8Data = new Uint8Array(audioData.length * 2);
+                for (let i = 0; i < audioData.length; i++) {
+                    // 将Int16值转换为小端序字节
+                    const int16Value = int16Data[i];
+                    uint8Data[i * 2] = int16Value & 0xFF;          // 低字节
+                    uint8Data[i * 2 + 1] = (int16Value >> 8) & 0xFF; // 高字节
+                }
+                
+                console.log("[AudioRecorder] Converting audio data - Input length:", audioData.length, "samples, Output length:", uint8Data.length, "bytes");
+                
+                // 验证输出数据是否符合预期
+                if (uint8Data.length !== audioData.length * 2) {
+                    console.warn("[AudioRecorder] Warning: Output data size mismatch - expected:", audioData.length * 2, "actual:", uint8Data.length);
+                }
+                
+                // 检查数据是否为空
+                if (uint8Data.length === 0) {
+                    console.warn("[AudioRecorder] Warning: Empty audio data generated");
+                }
 
                 // 调用音频数据处理回调
                 audioDataHandler(uint8Data);

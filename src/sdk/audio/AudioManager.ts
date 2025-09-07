@@ -1,43 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-function-type */
-// 简单的EventEmitter实现，避免Node.js依赖
-class EventEmitter {
-    private events: { [key: string]: Function[] } = {};
-
-    on(event: string, listener: Function): this {
-        if (!this.events[event]) {
-            this.events[event] = [];
-        }
-        this.events[event].push(listener);
-        return this;
-    }
-
-    off(event: string, listener: Function): this {
-        if (!this.events[event]) return this;
-        this.events[event] = this.events[event].filter(l => l !== listener);
-        return this;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    emit(event: string, ...args: any[]): boolean {
-        if (!this.events[event]) return false;
-        this.events[event].forEach(listener => listener(...args));
-        return true;
-    }
-
-    removeAllListeners(event?: string): this {
-        if (event) {
-            delete this.events[event];
-        } else {
-            this.events = {};
-        }
-        return this;
-    }
-}
-import { AUDIO_QUALITY } from "../types/protocol";
+import { EventEmitter } from '../utils/EventEmitter';
+import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
 import { AudioChunker } from "./AudioChunker";
 import { AudioPlayer } from "./AudioPlayer";
 import { AudioRecorder } from "./AudioRecorder";
-import { AudioManagerLogger as logger } from './Logger';
+import { AudioManagerLogger as logger } from '../utils/GlobalLogger';
 
 /**
  * 音频事件类型定义
@@ -298,14 +264,14 @@ export class AudioManager extends EventEmitter {
         if (!this.chunker) {
             const encodeOpus = config.encoderType !== 'pcm'; // 默认使用opus编码，除非明确指定pcm
             const chunkSize = config.chunkSize || AUDIO_QUALITY.FIXED_CHUNK_SIZE;
-            
+
             console.log('[AudioManager] Starting audio uplink with configuration:', {
                 encoderType: config.encoderType || 'opus', // 默认显示opus
                 encodeOpus: encodeOpus,
                 chunkSize: chunkSize,
                 hasChunkProcessor: !!config.onChunkProcessed
             });
-            
+
             this.chunker = new AudioChunker(
                 config.onChunkProcessed,
                 chunkSize,

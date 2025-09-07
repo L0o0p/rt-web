@@ -59,9 +59,3 @@ export class Logger {
         }
     }
 }
-
-// 创建预定义的日志管理器实例
-export const AudioManagerLogger = new Logger({ prefix: 'AudioManager' });
-export const AudioRecorderLogger = new Logger({ prefix: 'AudioRecorder' });
-export const AudioPlayerLogger = new Logger({ prefix: 'AudioPlayer' });
-export const AudioChunkerLogger = new Logger({ prefix: 'AudioChunker' });

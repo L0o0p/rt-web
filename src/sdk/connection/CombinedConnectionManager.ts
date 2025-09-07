@@ -1,0 +1,345 @@
+import { CONFIG } from '../types/protocol';
+import { globalLogger as logger } from '../utils/GlobalLogger';
+import { ClientBinaryMessage as BinaryMessage, CommandId, ProtocolId } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload } from '../protocol/ClientProtocol';
+import {
+  WebSocketMessageParser,
+  BinaryMessageParser,
+} from '../protocol/UnifiedParser';
+import { EventEmitter } from '../utils/EventEmitter';
+// 解码和播放逻辑应在上层 App 中处理
+
+// 事件类型定义
+export interface ConnectionEvents {
+  'open': (event: Event) => void;
+  'close': (event: CloseEvent) => void;
+  'error': (event: Event) => void;
+}
+
+export class CombinedConnectionManager extends EventEmitter {
+  // WebSocket连接相关属性
+  private websocket: WebSocket | null = null;
+  private connectionAttempts: number = 0;
+  private reconnectTimeout: number | null = null;
+  private heartbeatInterval: number | null = null;
+
+  // 会话相关属性
+  private sessionId: string | undefined = undefined;
+  private pingTimestamps: Array<{ id: number; timestamp: number }> = [];
+  private defaultSessionConfig?: Partial<SessionConfigPayload>;
+
+  // 消息解析器
+  private webSocketParser: WebSocketMessageParser;
+  private binaryParser: BinaryMessageParser;
+
+  constructor(sessionId?: string, defaultSessionConfig?: Partial<SessionConfigPayload>) {
+    super();
+    this.webSocketParser = new WebSocketMessageParser();
+    this.binaryParser = new BinaryMessageParser();
+    this.defaultSessionConfig = defaultSessionConfig;
+    if (sessionId) {
+      this.sessionId = sessionId;
+    }
+    else {
+      // 16字的随机字符串
+      this.sessionId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    }
+  }
+
+  /**
+   * 连接到WebSocket服务器
+   */
+  async connect(): Promise<void> {
+    try {
+      if (!window.WebSocket) {
+        throw new Error('当前浏览器不支持WebSocket');
+      }
+
+      this.websocket = new WebSocket(CONFIG.WEBSOCKET_URL);
+
+      this.websocket.onopen = (event: Event): void => {
+        this.handleOpen(event);
+        this.emit('open', event);
+      };
+
+      this.websocket.onmessage = (event: MessageEvent): void => {
+        this.handleMessage(event);
+      };
+
+      this.websocket.onclose = (event: CloseEvent): void => {
+        this.handleClose(event);
+        this.emit('close', event);
+      };
+
+      this.websocket.onerror = (event: Event): void => {
+        this.emit('error', event);
+      };
+    } catch (_error) {
+      throw new Error("连接失败");
+    }
+  }
+
+  /**
+   * 断开连接
+   */
+  disconnect(): void {
+    if (this.websocket) {
+      const currentState = this.websocket.readyState;
+      if (currentState === WebSocket.OPEN || currentState === WebSocket.CONNECTING) {
+        this.websocket.close(1000, 'Client requested disconnection');
+      }
+    }
+
+    this.cleanup();
+  }
+
+  /**
+   * 发送文本消息
+   */
+  sendTextMessage(message: WebSocketMessage['payload'], commandID: CommandId): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      const fullMessage = {
+        protocol_id: ProtocolId.All,
+        command_id: commandID,
+        session_id: this.sessionId!,
+        payload: message
+      } satisfies WebSocketMessage;
+
+      const messageStr = JSON.stringify(fullMessage);
+
+      // 添加详细的发送日志
+      if (message && typeof message === 'object' && 'type' in message && message.type === 'session_config') {
+        const sessionConfig = message as SessionConfigPayload;
+        logger.info(`[CLIENT] Sending WebSocket message with asr_language: ${sessionConfig.asr_language}`);
+        logger.info(`[CLIENT] Full WebSocket message:`, JSON.stringify(fullMessage, null, 2));
+      }
+
+      try {
+        this.websocket.send(messageStr);
+        logger.info(`[CLIENT] Message sent successfully`);
+      } catch (error) {
+        logger.error(`发送文本消息失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      logger.error('WebSocket未连接，无法发送消息');
+    }
+  }
+
+  /**
+   * 发送二进制消息
+   */
+  sendBinaryMessage(message: BinaryMessage): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      try {
+        const bytes = message.toBytes();
+        logger.debug(`发送二进制消息: 大小=${bytes.length}字节, 消息类型=${message.header.commandId}`);
+        this.websocket.send(bytes);
+      } catch (error) {
+        logger.error(`发送二进制消息失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      logger.error('WebSocket未连接，无法发送二进制消息');
+    }
+  }
+
+  /**
+   * 设置消息事件回调 - 为了保持向后兼容性
+   */
+
+  // === 以下是从原WebSocketManager迁移的方法 ===
+
+  private handleOpen(_event: Event): void {
+    this.connectionAttempts = 0;
+    // 如果没有提供 sessionID，则生成一个新的
+    if (!this.sessionId) {
+      this.sessionId = this.generateSessionId();
+    }
+    this.createSession();
+    this.startHeartbeat();
+  }
+
+  private handleClose(event: CloseEvent): void {
+    this.stopHeartbeat();
+
+    if (!event.wasClean && this.connectionAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
+      this.connectionAttempts++;
+      this.reconnectTimeout = window.setTimeout(() => {
+        // 重新连接逻辑
+      }, CONFIG.RECONNECT_INTERVAL);
+    }
+  }
+
+  private generateSessionId(): string {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substr(2);
+    const combined = timestamp + random;
+    return combined.substr(0, 16).padEnd(16, '0');
+  }
+  /**
+   * 重新创建会话
+   */
+  recreateSession(sessionId?: string, config?: Partial<SessionConfigPayload>): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      // 使用提供的 sessionID 或者保持现有的 sessionID
+      if (sessionId) {
+        this.sessionId = sessionId;
+      }
+      // 创建会话
+      this.createSession(config);
+    }
+  }
+
+  private createSession(config?: Partial<SessionConfigPayload>): void {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN && this.sessionId) {
+      const sessionConfigPayload: SessionConfigPayload = {
+        type: "session_config",
+        mode: "vad",
+        system_prompt: "你是一个语音AI助手...",
+        mcp_server_config: [
+        ],
+        enable_search: true,
+        signal_only: true,
+        asr_language: "zh",
+        timezone: "Asia/Shanghai",
+        location: "中国",
+        initial_burst_count: 10,
+        initial_burst_delay_ms: 5,
+        send_rate_multiplier: 1.0,
+        output_audio_config: {
+          format: "opus",
+          slice_ms: 20,
+          sample_rate: 16000,
+          channels: 1,
+          bitrate: 32000,
+          application: "voip"
+        },
+        input_audio_config: {
+          format: "opus",
+          sample_rate: 16000,
+          channels: 1,
+          bitrate: 32000,
+          application: "voip"
+        },
+        text_done_signal_only: false,
+        ...this.defaultSessionConfig,
+        ...config
+      };
+
+      // 添加调试日志
+      logger.info(`[CLIENT] Creating session with asr_language: ${sessionConfigPayload.asr_language}`);
+      logger.info(`[CLIENT] Full session config:`, JSON.stringify(sessionConfigPayload, null, 2));
+      logger.info(`[CLIENT] defaultSessionConfig:`, JSON.stringify(this.defaultSessionConfig, null, 2));
+      logger.info(`[CLIENT] config parameter:`, JSON.stringify(config, null, 2));
+
+      this.sendTextMessage(sessionConfigPayload, CommandId.Start);
+    }
+  }
+
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+
+    this.heartbeatInterval = window.setInterval(() => {
+      if (this.websocket && this.websocket.readyState === WebSocket.OPEN && this.sessionId) {
+        const pingId = Date.now();
+        this.pingTimestamps.push({ id: pingId, timestamp: performance.now() });
+
+        if (this.pingTimestamps.length > 10) {
+          this.pingTimestamps.shift();
+        }
+
+        const pingMessage = BinaryMessage.createPing(this.sessionId);
+        this.sendBinaryMessage(pingMessage);
+      }
+    }, 10000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  private cleanup(): void {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    this.stopHeartbeat();
+    this.pingTimestamps = [];
+  }
+
+  // Getters
+  get isConnected(): boolean {
+    return this.websocket?.readyState === WebSocket.OPEN;
+  }
+
+  get currentSessionId(): string | undefined {
+    return this.sessionId;
+  }
+
+  get isSessionCreated(): boolean {
+    // 通过检查sessionId是否存在来判断会话是否已创建
+    return !!this.sessionId;
+  }
+
+  /**
+   * 更新默认会话配置
+   */
+  setDefaultSessionConfig(config: Partial<SessionConfigPayload>): void {
+    this.defaultSessionConfig = config;
+  }
+
+  // === 以下是从原SDKMessageHandler迁移的方法 ===
+
+  private handleMessage(event: MessageEvent): void {
+    try {
+      if (typeof event.data === 'string') {
+        const parsedMessage = this.webSocketParser.parse(event.data);
+        logger.info(`[SDK] 收到服务器文本消息: ${JSON.stringify(parsedMessage.rawData)}`);
+
+        try {
+          const rawData = parsedMessage.rawData;
+          let actualMessage = rawData;
+          let messageType = rawData.type;
+          if (!messageType && rawData.payload && rawData.payload.type) {
+            actualMessage = rawData.payload;
+            messageType = rawData.payload.type;
+            actualMessage.session_id = rawData.session_id;
+          }
+
+          // 针对 response.audio.delta 进行解码（Base64 -> Opus -> PCM16）
+          // response.audio.delta 的解码播放交由 App 层处理
+
+          // 直接emit事件，事件类型就是messageType
+          this.emit(messageType, actualMessage);
+        } catch (error) {
+          logger.error(`[SDK] 处理文本消息时出错: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        try {
+          const parsedMessage = this.binaryParser.parse(event.data);
+          logger.info(`[SDK] 收到服务器二进制消息，长度: ${event.data.byteLength} 字节`);
+          // 对于二进制消息，我们也采用同样的方式，直接emit事件
+          if (parsedMessage.payload && parsedMessage.payload.type) {
+            // 如果有载荷类型，直接使用载荷类型作为事件类型
+            this.emit(parsedMessage.payload.type, parsedMessage.payload);
+          } else {
+            // 如果没有载荷类型，使用一个通用的事件类型
+            this.emit('binaryMessage', parsedMessage);
+          }
+        } catch (_error) {
+          logger.error(`[SDK] 解析二进制消息时出错: ${_error instanceof Error ? _error.message : String(_error)}`);
+        }
+      }
+    } catch (_error) {
+      logger.error(`[SDK] 处理WebSocket消息时出错: ${_error instanceof Error ? _error.message : String(_error)}`);
+      logger.error(`[SDK] 原始消息数据: ${event.data}`);
+    }
+  }
+
+  // Base64 编解码工具改用 AudioUtils 中的实现
+
+}

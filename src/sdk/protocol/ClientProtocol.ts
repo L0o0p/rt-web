@@ -1,4 +1,35 @@
-import { BINARY_MESSAGE } from '../types/protocol';
+/**
+ * 二进制消息协议常量
+ */
+export const BINARY_MESSAGE = {
+    NANOID_SIZE: 16,
+    PROTOCOL_ID_OFFSET: 16,
+    COMMAND_ID_OFFSET: 17,
+    BINARY_HEADER_SIZE: 32,
+
+    // 协议ID
+    PROTOCOL_ID_ASR: 1,  // ASR协议ID
+    PROTOCOL_ID_LLM: 2,  // LLM协议ID
+    PROTOCOL_ID_TTS: 3,  // TTS协议ID
+    PROTOCOL_ID_CONTROL: 0, // 控制协议ID
+
+    // 命令ID
+    CMD_START: 1,        // 开始命令
+    CMD_STOP: 2,         // 停止命令
+    CMD_AUDIO_CHUNK: 3,  // 音频块命令
+    CMD_TEXT_DATA: 4,    // 文本数据命令
+    CMD_STOP_INPUT: 5,   // 停止输入命令
+    CMD_RESULT: 100,     // 结果命令
+    CMD_ERROR: 255       // 错误命令
+} as const;
+
+// 音频质量控制参数
+export const AUDIO_QUALITY = {
+    SAMPLE_RATE: 16000, // 固定采样率
+    TARGET_LATENCY_MS: 100, // 低延迟目标
+    VOLUME_BOOST: 1.0, // 不额外调整音量，在解码时处理
+    FIXED_CHUNK_SIZE: 640, // 20ms的音频块大小（16000Hz * 2字节/sample * 0.02s = 640字节）
+} as const;
 
 /**
  * 协议ID枚举
@@ -83,6 +114,15 @@ export interface TextDataPayload {
     text: string;
 }
 
+export interface AudioConfig {
+    format: "opus" | "pcm";
+    slice_ms?: number;
+    sample_rate?: number;
+    channels?: number;
+    bitrate?: number;
+    application?: "voip" | "audio" | "restricted_lowdelay";
+}
+
 export interface SessionConfigPayload {
     type: "session_config";
     mode?: string;
@@ -90,9 +130,9 @@ export interface SessionConfigPayload {
     silence_duration_ms?: number;
     min_speech_duration_ms?: number;
     system_prompt?: string;
-    mcp_server_config?: Record<string, unknown>;
-    tools?: unknown[];
-    tool_choice?: Record<string, unknown>;
+    mcp_server_config?: Record<string, unknown> | Record<string, unknown>[];
+    tools?: Record<string, unknown>[];
+    tool_choice?: string | Record<string, unknown>;
     enable_search?: boolean;
     search_config?: Record<string, unknown>;
     voice_setting?: Record<string, unknown>;
@@ -103,8 +143,8 @@ export interface SessionConfigPayload {
     initial_burst_count?: number;
     initial_burst_delay_ms?: number;
     send_rate_multiplier?: number;
-    output_audio_config?: Record<string, unknown>;
-    input_audio_config?: Record<string, unknown>;
+    output_audio_config?: AudioConfig;
+    input_audio_config?: AudioConfig;
     text_done_signal_only?: boolean;
     signal_only?: boolean;
 }
@@ -494,7 +534,6 @@ export class ClientBinaryMessage {
 
         result.set(headerBytes, 0);
         result.set(this.payload, headerBytes.length);
-
         return result;
     }
 
@@ -537,6 +576,14 @@ export class ClientBinaryMessage {
         const header = new BinaryHeader(sessionId, ProtocolId.Tts, CommandId.TextData);
         const textBytes = new TextEncoder().encode(text);
         return new ClientBinaryMessage(header, textBytes);
+    }
+
+    /**
+     * 创建Ping二进制消息
+     */
+    static createPing(sessionId: string): ClientBinaryMessage {
+        const header = new BinaryHeader(sessionId, ProtocolId.Control, CommandId.Ping);
+        return new ClientBinaryMessage(header, new Uint8Array(0));
     }
 }
 

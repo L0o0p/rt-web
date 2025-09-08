@@ -198,7 +198,7 @@ export class CombinedConnectionManager extends EventEmitter {
         mcp_server_config: [
         ],
         enable_search: true,
-        signal_only: true,
+        signal_only: false,
         asr_language: "zh",
         timezone: "Asia/Shanghai",
         location: "中国",

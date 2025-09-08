@@ -41,14 +41,15 @@ $secondary-color: #ffffff;
 .squadyUI {
     position: relative;
     cursor: pointer;
-    transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), box-shadow 0.15s cubic-bezier(0.4,0,0.2,1);
+    transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+
     &:hover {
         transform: scale(1.08);
         // box-shadow: 0 6px 32px 0 rgba(120,124,240,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10);
     }
 }
 
-.squadyUIText{
+.squadyUIText {
     display: flex;
 }
 
@@ -101,4 +102,34 @@ $secondary-color: #ffffff;
     z-index: 1;
     pointer-events: none;
     animation: fadeIn 0.3s ease-in-out;
+}
+
+.responseTextDisplay {
+    color: $secondary-color;
+    font-family: 'Caros Medium', sans-serif;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1.5;
+    margin-top: 2rem;
+    max-width: 600px;
+    width: 100%;
+    text-align: center;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(10px);
+    min-height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.3s ease-in-out;
+
+    &:empty::before {
+        content: '等待服务器文本响应...';
+        opacity: 0.7;
+        font-style: italic;
+    }
 }

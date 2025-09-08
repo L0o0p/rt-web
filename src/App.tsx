@@ -41,11 +41,11 @@ const SquadyUI: React.FC<SquadyUIProps> = ({ onToggleRecording }) => {
   return (
     <div className={styles.squadyUIContainer}>
       <div
-        className={`${styles.squadyUI} ${isUserSpeaking ? styles.squadyUIRipple : ''}`}
+        className={styles.squadyUI}
         onClick={onToggleRecording}
-        style={isUserSpeaking ? { borderRadius: '999px' } : { borderRadius: '0' }}
+        style={isUserSpeaking ? { width: '60%', borderRadius: '999px' } : { width: '100%', borderRadius: '0' }}
       >
-        <img src={squadyLogo} alt="squady" style={isUserSpeaking ? { height: '60%' } : {height: '100%'}} />
+        <img src={squadyLogo} alt="squady" />
       </div>
       <div className={styles.squadyUIText}>
         <div>{text}</div>

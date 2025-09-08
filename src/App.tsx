@@ -64,22 +64,22 @@ export const App = () => {
 
   // 响应速度监控相关状态
   const [responseMetrics, setResponseMetrics] = useState<{
-    textResponseTimes: number[];
     audioResponseTimes: number[];
-    averageTextLatency: number;
     averageAudioLatency: number;
     totalInteractions: number;
+    lastAudioLatency: number;
+    isTimingActive: boolean;
   }>({
-    textResponseTimes: [],
     audioResponseTimes: [],
-    averageTextLatency: 0,
     averageAudioLatency: 0,
-    totalInteractions: 0
+    totalInteractions: 0,
+    lastAudioLatency: 0,
+    isTimingActive: false
   });
 
   // 用于跟踪请求时间的 Ref
   const speechStartTimeRef = useRef<number | null>(null);
-  const lastInteractionTimeRef = useRef<number | null>(null);
+  const hasRecordedResponse = useRef<boolean>(false);
 
   // 获取RealTime实例中的AudioManager
   const audioManagerRef = useRef<AudioManager | null>(null);
@@ -167,6 +167,7 @@ export const App = () => {
                   // console.warn('[APP UPLINK] Warning: Audio chunk too small, size:', chunk.length, 'bytes, skipping send');
                   return;
                 }
+
 
                 // console.debug('[APP UPLINK] Sending audio chunk to server, size:', chunk.length, 'bytes');
 
@@ -299,6 +300,17 @@ export const App = () => {
         setSpeechSegmentCount(speechSegmentsRef.current.length); // 更新状态触发重新渲染
         // console.debug('[APP VAD] Stored speech segment, total segments:', speechSegmentsRef.current.length);
         // console.debug('[APP VAD] Speech segment duration (approx):', (finalAudio.length / 16000).toFixed(2), 'seconds');
+
+        // ========== VAD检测到语音结束时开始响应延迟计时 ==========
+        speechStartTimeRef.current = performance.now();
+        hasRecordedResponse.current = false;
+        console.log('[PERF MONITOR] VAD检测到语音结束，开始计时等待服务器响应');
+
+        // 更新状态显示计时器已激活
+        setResponseMetrics(prev => ({
+          ...prev,
+          isTimingActive: true
+        }));
       } else {
         // console.warn('[APP VAD] Received empty speech audio data from both sources');
       }
@@ -424,6 +436,30 @@ export const App = () => {
           if (eventName === 'response.audio.delta') {
             const evt = payload as ResponseAudioDeltaEvent;
             if (!evt || typeof evt.delta !== 'string') return;
+
+            // ========== 响应延迟计算 ==========
+            // 当收到第一个 response.audio.delta 时，定格计算延迟
+            if (speechStartTimeRef.current && !hasRecordedResponse.current) {
+              const audioLatency = performance.now() - speechStartTimeRef.current;
+              hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
+
+              console.log(`[PERF MONITOR] 收到音频响应，延迟: ${audioLatency.toFixed(2)}ms`);
+
+              setResponseMetrics(prev => {
+                const newAudioTimes = [...prev.audioResponseTimes, audioLatency].slice(-50); // 保留最近50次
+                const avgAudio = newAudioTimes.reduce((sum, time) => sum + time, 0) / newAudioTimes.length;
+
+                return {
+                  ...prev,
+                  audioResponseTimes: newAudioTimes,
+                  averageAudioLatency: avgAudio,
+                  lastAudioLatency: audioLatency,
+                  totalInteractions: prev.totalInteractions + 1,
+                  isTimingActive: false // 计时完成，关闭计时状态
+                };
+              });
+            }
+
             try {
               const opusBytes = base64ToUint8Array(evt.delta);
               let pcmBytes = audioProcessor.decodeOpus(opusBytes);
@@ -477,73 +513,6 @@ export const App = () => {
         voiceChatCore.on(eventName, handler);
       });
 
-      // 添加响应速度监控的事件处理器
-      const performanceHandlers = new Map<string, (payload: unknown) => void>();
-
-      // 监听语音开始 - 记录请求开始时间
-      const speechStartHandler = (payload: unknown) => {
-        speechStartTimeRef.current = performance.now();
-        console.log('[PERF MONITOR] 语音输入开始');
-      };
-
-      // 监听文本响应开始 - 计算文本响应延迟
-      const responseCreatedHandler = (payload: unknown) => {
-        if (speechStartTimeRef.current) {
-          const responseTime = performance.now() - speechStartTimeRef.current;
-          console.log('[PERF MONITOR] 服务器开始响应，延迟:', responseTime.toFixed(2), 'ms');
-
-          setResponseMetrics(prev => {
-            const newTextTimes = [...prev.textResponseTimes, responseTime].slice(-50); // 保留最近50次
-            const avgText = newTextTimes.reduce((sum, time) => sum + time, 0) / newTextTimes.length;
-
-            return {
-              ...prev,
-              textResponseTimes: newTextTimes,
-              averageTextLatency: avgText,
-              totalInteractions: prev.totalInteractions + 1
-            };
-          });
-        }
-      };
-
-      // 监听音频响应开始 - 计算音频响应延迟
-      const audioBufferStartedHandler = (payload: unknown) => {
-        if (speechStartTimeRef.current) {
-          const audioResponseTime = performance.now() - speechStartTimeRef.current;
-          console.log('[PERF MONITOR] 音频开始响应，延迟:', audioResponseTime.toFixed(2), 'ms');
-
-          setResponseMetrics(prev => {
-            const newAudioTimes = [...prev.audioResponseTimes, audioResponseTime].slice(-50); // 保留最近50次
-            const avgAudio = newAudioTimes.reduce((sum, time) => sum + time, 0) / newAudioTimes.length;
-
-            return {
-              ...prev,
-              audioResponseTimes: newAudioTimes,
-              averageAudioLatency: avgAudio
-            };
-          });
-        }
-      };
-
-      // 监听响应完成 - 重置计时器
-      const responseDoneHandler = (payload: unknown) => {
-        if (speechStartTimeRef.current) {
-          const totalTime = performance.now() - speechStartTimeRef.current;
-          console.log('[PERF MONITOR] 完整对话轮次完成，总时长:', totalTime.toFixed(2), 'ms');
-          speechStartTimeRef.current = null;
-        }
-      };
-
-      // 注册性能监控事件
-      performanceHandlers.set('input_audio_buffer.speech_started', speechStartHandler);
-      performanceHandlers.set('response.created', responseCreatedHandler);
-      performanceHandlers.set('output_audio_buffer.started', audioBufferStartedHandler);
-      performanceHandlers.set('response.done', responseDoneHandler);
-
-      // 监听所有相关事件
-      performanceHandlers.forEach((handler, eventName) => {
-        voiceChatCore.on(eventName, handler);
-      });
 
       // 清理
       return () => {
@@ -551,12 +520,19 @@ export const App = () => {
         stopAudioTransmission();
         voiceChatCore.off('audio_chunk', handleAudioDataReceived);
         handlers.forEach((h, name) => voiceChatCore.off(name, h));
-        performanceHandlers.forEach((h, name) => voiceChatCore.off(name, h));
       };
     }
 
     return undefined;
   }, [isPlayingDownstreamAudio]);
+
+  // 获取延迟颜色类名的函数
+  const getLatencyColor = (latency: number): string => {
+    if (latency === 0) return '';
+    if (latency < 1000) return styles.excellent;
+    if (latency < 2000) return styles.good;
+    return styles.poor;
+  };
 
   return (
     <div className={styles.container}>
@@ -583,53 +559,58 @@ export const App = () => {
         <h4>实时响应监控</h4>
         <div className={styles.metricsGrid}>
           <div className={styles.metric}>
-            <span className={styles.metricLabel}>文本响应延迟</span>
-            <span className={`${styles.metricValue} ${responseMetrics.averageTextLatency < 1000 ? styles.excellent : responseMetrics.averageTextLatency < 2000 ? styles.good : styles.poor}`}>
-              {responseMetrics.averageTextLatency > 0
-                ? `${responseMetrics.averageTextLatency.toFixed(0)}ms`
-                : '--'}
-            </span>
-          </div>
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>音频响应延迟</span>
-            <span className={`${styles.metricValue} ${responseMetrics.averageAudioLatency < 1000 ? styles.excellent : responseMetrics.averageAudioLatency < 2000 ? styles.good : styles.poor}`}>
+            <span className={styles.metricLabel}>平均音频延迟</span>
+            <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
               {responseMetrics.averageAudioLatency > 0
                 ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
                 : '--'}
             </span>
           </div>
+
+          <div className={styles.metric}>
+            <span className={styles.metricLabel}>最近音频延迟</span>
+            <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
+              {responseMetrics.lastAudioLatency > 0
+                ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
+                : '--'}
+            </span>
+          </div>
+
           <div className={styles.metric}>
             <span className={styles.metricLabel}>对话轮次</span>
             <span className={styles.metricValue}>
               {responseMetrics.totalInteractions}
             </span>
           </div>
-          {responseMetrics.textResponseTimes.length > 0 && (
-            <div className={styles.metric}>
-              <span className={styles.metricLabel}>最近响应</span>
-              <span className={styles.metricValue}>
-                {responseMetrics.textResponseTimes[responseMetrics.textResponseTimes.length - 1].toFixed(0)}ms
-              </span>
-            </div>
-          )}
+
+          <div className={styles.metric}>
+            <span className={styles.metricLabel}>计时状态</span>
+            <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : ''}`}>
+              {responseMetrics.isTimingActive ? '计时中...' : '待机'}
+            </span>
+          </div>
         </div>
 
-        {/* 响应时间趋势图 (简单的条形图) */}
-        {responseMetrics.textResponseTimes.length > 1 && (
+        {/* 响应时间趋势图 */}
+        {responseMetrics.audioResponseTimes.length > 1 && (
           <div className={styles.responseTrend}>
-            <div className={styles.trendLabel}>最近响应时间趋势</div>
+            <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
             <div className={styles.trendBars}>
-              {responseMetrics.textResponseTimes.slice(-10).map((time, index) => (
+              {responseMetrics.audioResponseTimes.slice(-10).map((time, index) => (
                 <div
                   key={index}
                   className={styles.trendBar}
                   style={{
-                    height: `${Math.min(time / 10, 50)}px`,
+                    height: `${Math.min(time / 20, 50)}px`,
                     backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
                   }}
-                  title={`${time.toFixed(0)}ms`}
+                  title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
                 />
               ))}
+            </div>
+            <div className={styles.trendStats}>
+              <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(0)}ms</span>
+              <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(0)}ms</span>
             </div>
           </div>
         )}

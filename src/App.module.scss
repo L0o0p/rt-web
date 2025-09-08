@@ -256,4 +256,33 @@ body {
     &.poor {
         color: #F44336; // > 2秒：红色
     }
+
+    &.timing {
+        color: #2196F3; // 计时中：蓝色
+        animation: pulse 1.5s ease-in-out infinite alternate;
+    }
+}
+
+.trendStats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: #999;
+    margin-top: 8px;
+
+    span {
+        padding: 2px 6px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 3px;
+    }
+}
+
+@keyframes pulse {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0.6;
+    }
 }

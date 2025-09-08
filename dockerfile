@@ -3,18 +3,16 @@ FROM --platform=linux/amd64 node:22 AS builder
 
 WORKDIR /usr/src/app
 
-# 启用 Corepack 以使用项目指定的 Yarn 版本
+# 启用 Corepack 并准备 Yarn
 RUN corepack enable
+RUN corepack prepare yarn@stable --activate
 
-# 设置 Yarn 使用 node_modules 模式并清理
-RUN yarn config set nodeLinker node-modules
-RUN yarn config set enableGlobalCache false
-
-# 复制依赖文件
+# 复制依赖文件和 yarn 配置
 COPY package.json yarn.lock .yarnrc.yml ./
+COPY .yarn .yarn
 
-# 清理并安装依赖
-RUN rm -rf .yarn && yarn install
+# 安装依赖
+RUN yarn install --frozen-lockfile
 
 # 复制源代码
 COPY . .

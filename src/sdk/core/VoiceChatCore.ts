@@ -79,16 +79,16 @@ export class VoiceChatCore extends EventEmitter {
       logger.warn('尝试发送空的音频数据，已阻止发送');
       return false;
     }
-    
+
     // 记录发送的音频数据信息
     logger.debug(`准备发送音频数据: ${audioData.length} 字节`);
-    
+
     // 验证数据是否符合基本要求
     if (audioData.length < 10) {
       logger.warn('音频数据太短，可能无效，长度:', audioData.length);
       return false;
     }
-    
+
     if (this.isDestroyed) {
       logger.warn('尝试向已销毁的实例发送音频数据');
       return false;
@@ -144,7 +144,7 @@ export class VoiceChatCore extends EventEmitter {
   public get currentSessionId(): string | null {
     return this.connectionManager.currentSessionId || null;
   }
-  
+
   /**
    * 设置会话配置
    */
@@ -158,7 +158,7 @@ export class VoiceChatCore extends EventEmitter {
     }
     // 如果尚未连接，配置将在下次连接时自动使用
   }
-  
+
   /**
    * 开始新会话
    */
@@ -166,8 +166,15 @@ export class VoiceChatCore extends EventEmitter {
     if (this.isDestroyed) {
       throw new Error('VoiceChatCore instance has been destroyed');
     }
-    
+
     // 重新创建会话
     this.connectionManager.recreateSession(undefined, config);
+  }
+
+  /**
+   * 获取连接管理器实例 - 用于高精度性能监控
+   */
+  public getConnectionManager(): CombinedConnectionManager {
+    return this.connectionManager;
   }
 }

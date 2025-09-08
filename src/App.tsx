@@ -9,7 +9,7 @@ import { RealTime } from './RealTime'
 import { WebSocketStatusMonitor } from './component/WebSocketStatusMonitor'
 import { StatusPoint } from './component/statusPoint'
 import type { AudioManager } from './sdk/audio/AudioManager'
-import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent } from './sdk/protocol/ClientProtocol';
+import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent, InputAudioSpeechStartedEvent, InputAudioSpeechStoppedEvent } from './sdk/protocol/ClientProtocol';
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
@@ -168,6 +168,8 @@ export const App = () => {
                   return;
                 }
 
+                // 注意：计时器现在由 input_audio_buffer.speech_started 事件控制
+                // 这里只负责发送音频数据，不再重置计时器
 
                 // console.debug('[APP UPLINK] Sending audio chunk to server, size:', chunk.length, 'bytes');
 
@@ -300,17 +302,6 @@ export const App = () => {
         setSpeechSegmentCount(speechSegmentsRef.current.length); // 更新状态触发重新渲染
         // console.debug('[APP VAD] Stored speech segment, total segments:', speechSegmentsRef.current.length);
         // console.debug('[APP VAD] Speech segment duration (approx):', (finalAudio.length / 16000).toFixed(2), 'seconds');
-
-        // ========== VAD检测到语音结束时开始响应延迟计时 ==========
-        speechStartTimeRef.current = performance.now();
-        hasRecordedResponse.current = false;
-        console.log('[PERF MONITOR] VAD检测到语音结束，开始计时等待服务器响应');
-
-        // 更新状态显示计时器已激活
-        setResponseMetrics(prev => ({
-          ...prev,
-          isTimingActive: true
-        }));
       } else {
         // console.warn('[APP VAD] Received empty speech audio data from both sources');
       }
@@ -377,6 +368,38 @@ export const App = () => {
     if (voiceChatCore) {
       voiceChatCore.on('audio_chunk', handleAudioDataReceived);
 
+      // ========== 高精度性能监控监听器 ==========
+      const connectionManager = voiceChatCore?.getConnectionManager();
+      if (connectionManager) {
+        // 监听高精度延迟测量完成事件
+        connectionManager.on('performance:latency:measured', (metric: {
+          type: string;
+          latency: number;
+          startTime: number;
+          endTime: number;
+          timestamp: number;
+        }) => {
+          console.log(`[HIGH-PERF] 高精度延迟测量: ${metric.type} = ${metric.latency.toFixed(3)}ms`);
+
+          // 更新UI显示
+          if (metric.type === 'response.audio.delta') {
+            setResponseMetrics(prev => {
+              const newAudioTimes = [...prev.audioResponseTimes, metric.latency].slice(-50);
+              const avgAudio = newAudioTimes.reduce((sum: number, time: number) => sum + time, 0) / newAudioTimes.length;
+
+              return {
+                ...prev,
+                audioResponseTimes: newAudioTimes,
+                averageAudioLatency: avgAudio,
+                lastAudioLatency: metric.latency,
+                totalInteractions: prev.totalInteractions + 1,
+                isTimingActive: false
+              };
+            });
+          }
+        });
+      }
+
       const handlers = new Map<string, (payload: unknown) => void>();
       // 按 response_id 缓冲PCM字节，基于时间阈值（50ms）聚合后播放
       type BufferState = { chunks: Uint8Array[]; lastFlushAt: number };
@@ -405,6 +428,30 @@ export const App = () => {
       };
       downstreamEvents.forEach((eventName) => {
         const handler = (payload: unknown) => {
+          // ========== 高精度响应延迟计时开始 ==========
+          // 当收到 input_audio_buffer.speech_stopped 事件时，启动高精度计时器
+          if (eventName === 'input_audio_buffer.speech_stopped') {
+            const voiceChatCore = realTime.getVoiceChatCore();
+            const connectionManager = voiceChatCore?.getConnectionManager();
+
+            if (connectionManager) {
+              // 启动高精度计时器 - 针对音频响应
+              connectionManager.startHighPrecisionTimer('response.audio.delta');
+              console.log('[PERF MONITOR] 用户说话结束，高精度计时器已启动 - response.audio.delta');
+            }
+
+            // 兼容性：保留原有计时方式
+            speechStartTimeRef.current = performance.now();
+            hasRecordedResponse.current = false;
+
+            // 更新状态显示计时器已激活
+            setResponseMetrics(prev => ({
+              ...prev,
+              isTimingActive: true
+            }));
+            return;
+          }
+
           // 通用事件监听，用于调试
           if (eventName.includes('text') || eventName.includes('response.created')) {
             console.log('[DEBUG] Event received:', eventName, payload);
@@ -584,9 +631,9 @@ export const App = () => {
           </div>
 
           <div className={styles.metric}>
-            <span className={styles.metricLabel}>计时状态</span>
-            <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : ''}`}>
-              {responseMetrics.isTimingActive ? '计时中...' : '待机'}
+            <span className={styles.metricLabel}>计时精度</span>
+            <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
+              {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
             </span>
           </div>
         </div>
@@ -609,8 +656,9 @@ export const App = () => {
               ))}
             </div>
             <div className={styles.trendStats}>
-              <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(0)}ms</span>
-              <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(0)}ms</span>
+              <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
+              <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
+              <span>精度: 1ms</span>
             </div>
           </div>
         )}

@@ -1,0 +1,50 @@
+name: Build and Deploy RealTime TS App
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  REGISTRY: harbor.luxhub.top:2097
+  IMAGE_NAME: realtime-ts/realtime-ts
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Harbor Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.HARBOR_USERNAME }}
+        password: ${{ secrets.HARBOR_PASSWORD }}
+        
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./dockerfile
+        platforms: linux/amd64
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Trigger Portainer Webhook
+      if: success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      uses: fjogeleit/http-request-action@v1
+      with:
+        url: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        method: 'POST'
+        timeout: 30000
+        retry: 3
+        retryWait: 5000

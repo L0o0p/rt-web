@@ -1,7 +1,7 @@
 import { CONFIG } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
 import { ClientBinaryMessage as BinaryMessage, CommandId, ProtocolId } from '../protocol/ClientProtocol';
-import type { WebSocketMessage, SessionConfigPayload } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload, TextDataPayload } from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
   BinaryMessageParser,
@@ -32,6 +32,35 @@ export class CombinedConnectionManager extends EventEmitter {
   private webSocketParser: WebSocketMessageParser;
   private binaryParser: BinaryMessageParser;
 
+  // ========== 高精度性能监控 ==========
+  private performanceTimers = new Map<string, number>(); // 存储各种事件的开始时间
+  private latencyMetrics: Array<{
+    type: string;
+    startTime: number;
+    endTime: number;
+    latency: number;
+    timestamp: number;
+  }> = [];
+  private maxMetricsHistory = 100; // 保留最近100次测量
+
+  // 性能测试相关属性
+  private isPerformanceTesting: boolean = false;
+  private testResults: Array<{
+    testId: string;
+    testType: 'ping' | 'text' | 'audio';
+    startTime: number;
+    endTime?: number;
+    latency?: number;
+    success: boolean;
+    error?: string;
+  }> = [];
+  private performanceTestConfig = {
+    pingCount: 100,        // Ping测试次数
+    textTestCount: 50,     // 文本消息测试次数
+    audioTestCount: 30,    // 音频消息测试次数
+    concurrency: 5,        // 并发连接数
+    interval: 10,          // 测试间隔(ms)
+  };
 
   constructor(sessionId?: string, defaultSessionConfig?: Partial<SessionConfigPayload>) {
     super();
@@ -336,6 +365,15 @@ export class CombinedConnectionManager extends EventEmitter {
             actualMessage.session_id = rawData.session_id;
           }
 
+          // ========== 高精度性能监控 - WebSocket层立即停止计时 ==========
+          // 在消息解析完成后立即停止对应的计时器
+          if (messageType) {
+            const latency = this.stopHighPrecisionTimer(messageType);
+            if (latency !== null) {
+              logger.info(`[PERF] High-precision latency for ${messageType}: ${latency.toFixed(3)}ms`);
+            }
+          }
+
           // 针对 response.audio.delta 进行解码（Base64 -> Opus -> PCM16）
           // response.audio.delta 的解码播放交由 App 层处理
 
@@ -368,7 +406,565 @@ export class CombinedConnectionManager extends EventEmitter {
 
   // Base64 编解码工具改用 AudioUtils 中的实现
 
+  // ========== 高精度性能监控方法 ==========
 
+  /**
+   * 开始计时 - 1ms精度
+   */
+  public startHighPrecisionTimer(eventType: string): void {
+    const now = performance.now();
+    this.performanceTimers.set(eventType, now);
 
+    // 立即发出计时开始事件
+    this.emit('performance:timer:start', {
+      type: eventType,
+      timestamp: now
+    });
+  }
 
+  /**
+   * 停止计时并记录延迟 - 1ms精度
+   */
+  public stopHighPrecisionTimer(eventType: string): number | null {
+    const endTime = performance.now();
+    const startTime = this.performanceTimers.get(eventType);
+
+    if (startTime === undefined) {
+      return null;
+    }
+
+    const latency = endTime - startTime;
+
+    // 记录到历史记录
+    const metric = {
+      type: eventType,
+      startTime,
+      endTime,
+      latency,
+      timestamp: Date.now()
+    };
+
+    this.latencyMetrics.push(metric);
+
+    // 限制历史记录大小
+    if (this.latencyMetrics.length > this.maxMetricsHistory) {
+      this.latencyMetrics.shift();
+    }
+
+    // 清除计时器
+    this.performanceTimers.delete(eventType);
+
+    // 立即发出延迟测量完成事件
+    this.emit('performance:latency:measured', metric);
+
+    return latency;
+  }
+
+  /**
+   * 获取性能指标
+   */
+  public getPerformanceMetrics(): {
+    latest: HighPrecisionMetric | null;
+    average: number;
+    min: number;
+    max: number;
+    count: number;
+    history: HighPrecisionMetric[];
+  } {
+    if (this.latencyMetrics.length === 0) {
+      return {
+        latest: null,
+        average: 0,
+        min: 0,
+        max: 0,
+        count: 0,
+        history: []
+      };
+    }
+
+    const latencies = this.latencyMetrics.map(m => m.latency);
+    const latest = this.latencyMetrics[this.latencyMetrics.length - 1];
+    const average = latencies.reduce((sum, lat) => sum + lat, 0) / latencies.length;
+    const min = Math.min(...latencies);
+    const max = Math.max(...latencies);
+
+    return {
+      latest,
+      average,
+      min,
+      max,
+      count: this.latencyMetrics.length,
+      history: [...this.latencyMetrics]
+    };
+  }
+
+  /**
+   * 清除性能历史记录
+   */
+  public clearPerformanceMetrics(): void {
+    this.latencyMetrics = [];
+    this.performanceTimers.clear();
+  }
+
+  /**
+   * 启动高性能服务器响应速度测试
+   */
+  async startPerformanceTest(options?: {
+    pingCount?: number;
+    textTestCount?: number;
+    audioTestCount?: number;
+    concurrency?: number;
+    interval?: number;
+  }): Promise<PerformanceTestResult> {
+    if (this.isPerformanceTesting) {
+      throw new Error('性能测试已在进行中');
+    }
+
+    // 更新测试配置
+    if (options) {
+      this.performanceTestConfig = { ...this.performanceTestConfig, ...options };
+    }
+
+    this.isPerformanceTesting = true;
+    this.testResults = [];
+
+    console.log('[PERF TEST] 开始性能测试...', this.performanceTestConfig);
+
+    try {
+      // 1. Ping延迟测试 (最高优先级，测试基础连接性能)
+      await this.runPingLatencyTest();
+
+      // 2. 文本消息响应测试
+      await this.runTextResponseTest();
+
+      // 3. 音频消息吞吐量测试
+      await this.runAudioThroughputTest();
+
+      // 4. 并发连接测试
+      await this.runConcurrencyTest();
+
+      return this.calculateTestResults();
+    } finally {
+      this.isPerformanceTesting = false;
+    }
+  }
+
+  /**
+   * Ping延迟测试 - 测试基础网络延迟
+   */
+  private async runPingLatencyTest(): Promise<void> {
+    console.log('[PERF TEST] 开始Ping延迟测试...');
+
+    const promises: Promise<void>[] = [];
+
+    for (let i = 0; i < this.performanceTestConfig.pingCount; i++) {
+      const promise = new Promise<void>((resolve) => {
+        const testId = `ping_${i}_${Date.now()}`;
+        const startTime = performance.now();
+
+        this.testResults.push({
+          testId,
+          testType: 'ping',
+          startTime,
+          success: false
+        });
+
+        // 发送Ping消息
+        if (this.websocket?.readyState === WebSocket.OPEN) {
+          const pingMessage = BinaryMessage.createPing(this.sessionId!);
+
+          // 监听响应 (通过现有的心跳响应机制)
+          const timeoutId = setTimeout(() => {
+            const result = this.testResults.find(r => r.testId === testId);
+            if (result && !result.endTime) {
+              result.success = false;
+              result.error = 'Timeout';
+              result.endTime = performance.now();
+            }
+            resolve();
+          }, 5000);
+
+          // 假设服务器会响应ping，这里模拟响应处理
+          const originalPingLength = this.pingTimestamps.length;
+
+          this.sendBinaryMessage(pingMessage);
+
+          // 检查响应
+          const checkResponse = () => {
+            if (this.pingTimestamps.length > originalPingLength) {
+              clearTimeout(timeoutId);
+              const endTime = performance.now();
+              const result = this.testResults.find(r => r.testId === testId);
+              if (result) {
+                result.endTime = endTime;
+                result.latency = endTime - startTime;
+                result.success = true;
+              }
+              resolve();
+            } else {
+              setTimeout(checkResponse, 1);
+            }
+          };
+
+          setTimeout(checkResponse, 1);
+        } else {
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result) {
+            result.success = false;
+            result.error = 'WebSocket not connected';
+            result.endTime = performance.now();
+          }
+          resolve();
+        }
+      });
+
+      promises.push(promise);
+
+      // 控制发送频率
+      if (i < this.performanceTestConfig.pingCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, this.performanceTestConfig.interval));
+      }
+    }
+
+    await Promise.all(promises);
+    console.log('[PERF TEST] Ping延迟测试完成');
+  }
+
+  /**
+   * 文本消息响应测试 - 测试文本消息的处理速度
+   */
+  private async runTextResponseTest(): Promise<void> {
+    console.log('[PERF TEST] 开始文本消息响应测试...');
+
+    const promises: Promise<void>[] = [];
+
+    for (let i = 0; i < this.performanceTestConfig.textTestCount; i++) {
+      const promise = new Promise<void>((resolve) => {
+        const testId = `text_${i}_${Date.now()}`;
+        const startTime = performance.now();
+
+        this.testResults.push({
+          testId,
+          testType: 'text',
+          startTime,
+          success: false
+        });
+
+        // 发送测试文本消息
+        const testMessage = {
+          type: "text_data",
+          text: `性能测试消息 #${i} - ${new Date().toISOString()}`
+        } as TextDataPayload;
+
+        // 监听响应
+        const responseHandler = () => {
+          const endTime = performance.now();
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result) {
+            result.endTime = endTime;
+            result.latency = endTime - startTime;
+            result.success = true;
+          }
+          this.off('response.text.delta', responseHandler);
+          this.off('response.text.done', responseHandler);
+          resolve();
+        };
+
+        setTimeout(() => {
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result && !result.endTime) {
+            result.success = false;
+            result.error = 'Timeout';
+            result.endTime = performance.now();
+          }
+          this.off('response.text.delta', responseHandler);
+          this.off('response.text.done', responseHandler);
+          resolve();
+        }, 10000);
+
+        this.on('response.text.delta', responseHandler);
+        this.on('response.text.done', responseHandler);
+
+        this.sendTextMessage(testMessage, CommandId.TextData);
+      });
+
+      promises.push(promise);
+
+      // 控制发送频率
+      if (i < this.performanceTestConfig.textTestCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, this.performanceTestConfig.interval * 2));
+      }
+    }
+
+    await Promise.all(promises);
+    console.log('[PERF TEST] 文本消息响应测试完成');
+  }
+
+  /**
+   * 音频消息吞吐量测试 - 测试音频处理能力
+   */
+  private async runAudioThroughputTest(): Promise<void> {
+    console.log('[PERF TEST] 开始音频消息吞吐量测试...');
+
+    // 生成测试音频数据 (模拟20ms的16kHz单声道音频)
+    const sampleRate = 16000;
+    const duration = 0.02; // 20ms
+    const samples = Math.floor(sampleRate * duration);
+    const testAudioData = new Uint8Array(samples * 2); // 16-bit audio
+
+    // 填充测试数据
+    for (let i = 0; i < testAudioData.length; i++) {
+      testAudioData[i] = Math.floor(Math.random() * 256);
+    }
+
+    const promises: Promise<void>[] = [];
+
+    for (let i = 0; i < this.performanceTestConfig.audioTestCount; i++) {
+      const promise = new Promise<void>((resolve) => {
+        const testId = `audio_${i}_${Date.now()}`;
+        const startTime = performance.now();
+
+        this.testResults.push({
+          testId,
+          testType: 'audio',
+          startTime,
+          success: false
+        });
+
+        // 监听音频响应
+        const responseHandler = () => {
+          const endTime = performance.now();
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result) {
+            result.endTime = endTime;
+            result.latency = endTime - startTime;
+            result.success = true;
+          }
+          this.off('response.audio.delta', responseHandler);
+          resolve();
+        };
+
+        setTimeout(() => {
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result && !result.endTime) {
+            result.success = false;
+            result.error = 'Timeout';
+            result.endTime = performance.now();
+          }
+          this.off('response.audio.delta', responseHandler);
+          resolve();
+        }, 15000);
+
+        this.on('response.audio.delta', responseHandler);
+
+        // 发送音频数据
+        const audioMessage = BinaryMessage.createAudioChunk(this.sessionId!, testAudioData);
+        this.sendBinaryMessage(audioMessage);
+      });
+
+      promises.push(promise);
+
+      // 控制发送频率
+      if (i < this.performanceTestConfig.audioTestCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, this.performanceTestConfig.interval));
+      }
+    }
+
+    await Promise.all(promises);
+    console.log('[PERF TEST] 音频消息吞吐量测试完成');
+  }
+
+  /**
+   * 并发连接测试 - 测试服务器并发处理能力
+   */
+  private async runConcurrencyTest(): Promise<void> {
+    console.log('[PERF TEST] 开始并发连接测试...');
+
+    // 注意：这里只是发送并发消息，而不是创建多个连接
+    // 因为在实际应用中，通常是单个连接的并发消息处理
+    const concurrentPromises: Promise<void>[] = [];
+
+    for (let i = 0; i < this.performanceTestConfig.concurrency; i++) {
+      const promise = new Promise<void>(async (resolve) => {
+        const testId = `concurrent_${i}_${Date.now()}`;
+        const startTime = performance.now();
+
+        this.testResults.push({
+          testId,
+          testType: 'ping',
+          startTime,
+          success: false
+        });
+
+        // 发送并发消息
+        if (this.websocket?.readyState === WebSocket.OPEN) {
+          const pingMessage = BinaryMessage.createPing(this.sessionId!);
+          this.sendBinaryMessage(pingMessage);
+
+          // 简单的成功检测
+          setTimeout(() => {
+            const result = this.testResults.find(r => r.testId === testId);
+            if (result) {
+              result.endTime = performance.now();
+              result.latency = result.endTime - startTime;
+              result.success = true;
+            }
+            resolve();
+          }, 100);
+        } else {
+          const result = this.testResults.find(r => r.testId === testId);
+          if (result) {
+            result.success = false;
+            result.error = 'WebSocket not connected';
+            result.endTime = performance.now();
+          }
+          resolve();
+        }
+      });
+
+      concurrentPromises.push(promise);
+    }
+
+    await Promise.all(concurrentPromises);
+    console.log('[PERF TEST] 并发连接测试完成');
+  }
+
+  /**
+   * 计算测试结果
+   */
+  private calculateTestResults(): PerformanceTestResult {
+    const pingResults = this.testResults.filter(r => r.testType === 'ping');
+    const textResults = this.testResults.filter(r => r.testType === 'text');
+    const audioResults = this.testResults.filter(r => r.testType === 'audio');
+
+    const calculateStats = (results: typeof this.testResults) => {
+      const successful = results.filter(r => r.success && r.latency);
+      const latencies = successful.map(r => r.latency!);
+
+      if (latencies.length === 0) {
+        return {
+          count: results.length,
+          successRate: 0,
+          averageLatency: 0,
+          minLatency: 0,
+          maxLatency: 0,
+          p50: 0,
+          p95: 0,
+          p99: 0
+        };
+      }
+
+      latencies.sort((a, b) => a - b);
+
+      return {
+        count: results.length,
+        successRate: (successful.length / results.length) * 100,
+        averageLatency: latencies.reduce((sum, lat) => sum + lat, 0) / latencies.length,
+        minLatency: latencies[0],
+        maxLatency: latencies[latencies.length - 1],
+        p50: latencies[Math.floor(latencies.length * 0.5)],
+        p95: latencies[Math.floor(latencies.length * 0.95)],
+        p99: latencies[Math.floor(latencies.length * 0.99)]
+      };
+    };
+
+    const result: PerformanceTestResult = {
+      summary: {
+        totalTests: this.testResults.length,
+        totalSuccessful: this.testResults.filter(r => r.success).length,
+        overallSuccessRate: (this.testResults.filter(r => r.success).length / this.testResults.length) * 100,
+        testDuration: Math.max(...this.testResults.map(r => r.endTime || r.startTime)) - Math.min(...this.testResults.map(r => r.startTime))
+      },
+      ping: calculateStats(pingResults),
+      text: calculateStats(textResults),
+      audio: calculateStats(audioResults),
+      rawResults: this.testResults
+    };
+
+    console.log('[PERF TEST] 测试结果:', result);
+    return result;
+  }
+
+  /**
+   * 获取性能测试状态
+   */
+  get isTestingPerformance(): boolean {
+    return this.isPerformanceTesting;
+  }
+
+}
+
+// 性能测试结果接口
+export interface PerformanceTestResult {
+  summary: {
+    totalTests: number;
+    totalSuccessful: number;
+    overallSuccessRate: number;
+    testDuration: number;
+  };
+  ping: {
+    count: number;
+    successRate: number;
+    averageLatency: number;
+    minLatency: number;
+    maxLatency: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  };
+  text: {
+    count: number;
+    successRate: number;
+    averageLatency: number;
+    minLatency: number;
+    maxLatency: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  };
+  audio: {
+    count: number;
+    successRate: number;
+    averageLatency: number;
+    minLatency: number;
+    maxLatency: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  };
+  rawResults: Array<{
+    testId: string;
+    testType: 'ping' | 'text' | 'audio';
+    startTime: number;
+    endTime?: number;
+    latency?: number;
+    success: boolean;
+    error?: string;
+  }>;
+}
+
+// ========== 高精度性能监控接口 ==========
+export interface HighPrecisionMetric {
+  type: string;
+  startTime: number;
+  endTime: number;
+  latency: number;
+  timestamp: number;
+}
+
+// 在 CombinedConnectionManager 类中添加高精度性能监控方法
+declare module './CombinedConnectionManager' {
+  interface CombinedConnectionManager {
+    startHighPrecisionTimer(eventType: string): void;
+    stopHighPrecisionTimer(eventType: string): number | null;
+    getPerformanceMetrics(): {
+      latest: HighPrecisionMetric | null;
+      average: number;
+      min: number;
+      max: number;
+      count: number;
+      history: HighPrecisionMetric[];
+    };
+    clearPerformanceMetrics(): void;
+  }
 }

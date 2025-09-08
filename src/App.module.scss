@@ -22,11 +22,14 @@ $secondary-color: #ffffff;
     align-items: center;
     justify-content: center;
     gap: 1rem;
+    position: relative;
+    z-index: 10;
 
     * {
         color: $secondary-color;
-        font-weight: bolder;
-        font-size: 64px;
+        font-family: 'Caros Heavy Italic', sans-serif;
+        font-weight: normal;
+        font-size: 72px;
         font-style: italic;
     }
 
@@ -38,6 +41,11 @@ $secondary-color: #ffffff;
 .squadyUI {
     position: relative;
     cursor: pointer;
+    transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), box-shadow 0.15s cubic-bezier(0.4,0,0.2,1);
+    &:hover {
+        transform: scale(1.08);
+        // box-shadow: 0 6px 32px 0 rgba(120,124,240,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10);
+    }
 }
 
 .squadyUIRipple {
@@ -141,4 +149,21 @@ $secondary-color: #ffffff;
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+.mainSection {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.audioVisualizerOverlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+    pointer-events: none;
+    animation: fadeIn 0.3s ease-in-out;
 }

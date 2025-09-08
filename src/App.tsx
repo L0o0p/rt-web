@@ -9,24 +9,23 @@ export const App = () => {
 
   return (
     <div className={styles.container}>
-      <SquadyUI onToggleRecording={() => setIsUserSpeaking(!isUserSpeaking)} />
-      {isUserSpeaking && (
-        <div className={styles.audioVisualizerSection}>
-          <LiveAudioVisualizerComponent
-            width={700}
-            height={200}
-            barColor="#ffffff"
-            backgroundColor="transparent"
-            smoothingTimeConstant={0.8}
-            fftSize={512}
-            barWidth={3}
-            gap={2}
-            isRecording={isUserSpeaking}
-            onRecordingStateChange={setIsUserSpeaking}
-            hideButton={true}
-          />
-        </div>
-      )}
+      <div className={styles.mainSection}>
+        {isUserSpeaking && (
+          <div className={styles.audioVisualizerOverlay}>
+            <LiveAudioVisualizerComponent
+              width={700}
+              height={200}
+              barColor="#ffffff"
+              smoothingTimeConstant={0.8}
+              fftSize={512}
+              barWidth={3}
+              gap={2}
+              isRecording={isUserSpeaking}
+            />
+          </div>
+        )}
+        <SquadyUI onToggleRecording={() => setIsUserSpeaking(!isUserSpeaking)} />
+      </div>
     </div>
   )
 }
@@ -43,7 +42,6 @@ const SquadyUI: React.FC<SquadyUIProps> = ({ onToggleRecording }) => {
       <div
         className={styles.squadyUI}
         onClick={onToggleRecording}
-        style={isUserSpeaking ? { width: '60%', borderRadius: '999px' } : { width: '100%', borderRadius: '0' }}
       >
         <img src={squadyLogo} alt="squady" />
       </div>

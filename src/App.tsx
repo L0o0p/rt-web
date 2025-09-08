@@ -1,11 +1,26 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useAtom } from 'jotai'
 import styles from './App.module.scss'
 import squadyLogo from './assets/squady.png'
 import { isUserSpeakingAtom } from './state'
 import { LiveAudioVisualizerComponent } from './component/audioVisualizer'
+import { RealTime } from './RealTime'
+
+const realTime = new RealTime()
+
 export const App = () => {
   const [isUserSpeaking, setIsUserSpeaking] = useAtom(isUserSpeakingAtom)
+  const hasConnected = useRef(false)
+
+  const connect = async () => {
+    if (hasConnected.current) return
+    hasConnected.current = true
+    await realTime.connectToServer()
+  }
+
+  useEffect(() => {
+    connect()
+  }, [])
 
   return (
     <div className={styles.container}>
@@ -36,7 +51,6 @@ interface SquadyUIProps {
 
 const SquadyUI: React.FC<SquadyUIProps> = ({ onToggleRecording }) => {
   const text = 'Squady'
-  const [isUserSpeaking] = useAtom(isUserSpeakingAtom)
   return (
     <div className={styles.squadyUIContainer}>
       <div

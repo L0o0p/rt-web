@@ -2776,6 +2776,7 @@ __metadata:
     globals: ^16.3.0
     react: ^19.1.1
     react-dom: ^19.1.1
+    reset-css: ^5.0.2
     sass: ^1.92.1
     typescript: ~5.8.3
     typescript-eslint: ^8.39.1
@@ -2787,6 +2788,13 @@ __metadata:
   version: 4.1.2
   resolution: "readdirp@npm:4.1.2"
   checksum: 3242ee125422cb7c0e12d51452e993f507e6ed3d8c490bc8bf3366c5cdd09167562224e429b13e9cb2b98d4b8b2b11dc100d3c73883aa92d657ade5a21ded004
+  languageName: node
+  linkType: hard
+
+"reset-css@npm:^5.0.2":
+  version: 5.0.2
+  resolution: "reset-css@npm:5.0.2"
+  checksum: d6955ea4d852c21510d6f50dc06e151a90e0d7d6fa43aac7a79f3779c72a1eb3a5769a2eb9f5c490675376888e9a4bfbc34937cd7d4198ab65a1c73620819b1a
   languageName: node
   linkType: hard
 

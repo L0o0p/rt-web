@@ -147,10 +147,43 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.2);
     backdrop-filter: blur(10px);
     min-height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    max-height: 320px;
+    overflow-y: auto;
+    display: block;
     animation: fadeIn 0.3s ease-in-out;
+
+    // 自定义滚动条样式
+    &::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        margin: 8px 0;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 6px;
+        transition: background 0.3s ease;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        &:active {
+            background: rgba(255, 255, 255, 0.6);
+        }
+    }
+
+    &::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
+    // Firefox 滚动条样式
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) rgba(255, 255, 255, 0.1);
 
     &:empty::before {
         content: '等待服务器文本响应...';

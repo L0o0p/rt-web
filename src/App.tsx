@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import React, { useEffect, useRef, useState } from 'react'
 import { useAtom } from 'jotai'
+import ReactMarkdown from 'react-markdown'
 import styles from './App.module.scss'
 import squadyLogo from './assets/squady.png'
 import { isUserSpeakingAtom } from './state'
@@ -667,7 +668,9 @@ export const App = () => {
 
       {/* 服务器文本响应显示区域 */}
       <div className={styles.responseTextDisplay}>
-        {currentText || finalTexts[0] || ''}
+        <ReactMarkdown>
+          {currentText || finalTexts[0] || ''}
+        </ReactMarkdown>
       </div>
     </div>
   )

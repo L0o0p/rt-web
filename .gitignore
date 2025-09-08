@@ -11,6 +11,7 @@ lerna-debug.log*
 /node_modules
 .pnp
 .pnp.js
+.ini
 
 # Babel cache
 .babel-cache
@@ -35,3 +36,6 @@ dist-ssr
 *.sw?
 
 .yarn/cache
+
+# Ignore all .ini files
+*.ini

@@ -4,6 +4,7 @@ import { AudioChunker } from "./AudioChunker";
 import { AudioPlayer } from "./AudioPlayer";
 import { AudioRecorder } from "./AudioRecorder";
 import { AudioManagerLogger as logger } from '../utils/GlobalLogger';
+import { type WebRTCAudioOptions } from './customIngestAudioStream';
 
 /**
  * 音频事件类型定义
@@ -38,6 +39,7 @@ export interface AudioModuleConfig {
         encoderType?: 'opus' | 'pcm';
         onChunkProcessed: (chunk: Uint8Array) => Promise<void>;
     };
+    webrtc?: WebRTCAudioOptions;
 }
 
 /**
@@ -129,6 +131,13 @@ export class AudioManager extends EventEmitter {
 
         if (config.uplink !== undefined) {
             this.moduleConfig.uplink = config.uplink;
+        }
+
+        // 更新 WebRTC 配置
+        if (config.webrtc !== undefined) {
+            this.moduleConfig.webrtc = config.webrtc;
+            this.recorder.configureWebRTCAudio(config.webrtc);
+            console.log('[AudioManager] WebRTC configuration updated:', config.webrtc);
         }
 
         console.log('[AudioManager] Configuration updated:', {
@@ -315,6 +324,74 @@ export class AudioManager extends EventEmitter {
         this.chunker?.setEncodeOpus(enabled);
         console.log('[AudioManager] Opus encoding set to:', enabled);
         return this;
+    }
+
+    /**
+     * 配置 WebRTC 音频处理选项
+     * @param options WebRTC 音频选项
+     * @returns 返回当前实例，支持链式调用
+     */
+    configureWebRTCAudio(options: Partial<WebRTCAudioOptions>): this {
+        if (!this.moduleConfig.webrtc) {
+            this.moduleConfig.webrtc = {};
+        }
+        this.moduleConfig.webrtc = { ...this.moduleConfig.webrtc, ...options };
+        this.recorder.configureWebRTCAudio(options);
+        console.log('[AudioManager] WebRTC audio configuration updated:', options);
+        return this;
+    }
+
+    /**
+     * 设置回声消除状态
+     * @param enabled 是否启用回声消除
+     * @returns 返回当前实例，支持链式调用
+     */
+    setEchoCancellation(enabled: boolean): this {
+        this.recorder.setEchoCancellation(enabled);
+        if (!this.moduleConfig.webrtc) {
+            this.moduleConfig.webrtc = {};
+        }
+        this.moduleConfig.webrtc.echoCancellation = enabled;
+        console.log('[AudioManager] Echo cancellation set to:', enabled);
+        return this;
+    }
+
+    /**
+     * 设置噪声抑制状态
+     * @param enabled 是否启用噪声抑制
+     * @returns 返回当前实例，支持链式调用
+     */
+    setNoiseSuppression(enabled: boolean): this {
+        this.recorder.setNoiseSuppression(enabled);
+        if (!this.moduleConfig.webrtc) {
+            this.moduleConfig.webrtc = {};
+        }
+        this.moduleConfig.webrtc.noiseSuppression = enabled;
+        console.log('[AudioManager] Noise suppression set to:', enabled);
+        return this;
+    }
+
+    /**
+     * 设置自动增益控制状态
+     * @param enabled 是否启用自动增益控制
+     * @returns 返回当前实例，支持链式调用
+     */
+    setAutoGainControl(enabled: boolean): this {
+        this.recorder.setAutoGainControl(enabled);
+        if (!this.moduleConfig.webrtc) {
+            this.moduleConfig.webrtc = {};
+        }
+        this.moduleConfig.webrtc.autoGainControl = enabled;
+        console.log('[AudioManager] Auto gain control set to:', enabled);
+        return this;
+    }
+
+    /**
+     * 获取当前 WebRTC 音频配置
+     * @returns 当前的 WebRTC 音频选项
+     */
+    getWebRTCConfig(): WebRTCAudioOptions {
+        return this.recorder.getWebRTCConfig();
     }
 
     /**

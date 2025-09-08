@@ -2,11 +2,36 @@
 $primary-color: #787CF0;
 $secondary-color: #ffffff;
 
+:root {
+    background-color: $primary-color;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+        display: none;
+    }
+
+    scroll-behavior: smooth;
+
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-overflow-scrolling: touch;
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
 .container {
     // background-color: #787CF0;
     background-color: $primary-color;
-    width: 100vw;
-    height: 100vh;
+    width: calc(100vw - 4rem);
+    height: calc(100vh - 4rem);
     display: flex;
     flex-direction: column;
     justify-content: center;

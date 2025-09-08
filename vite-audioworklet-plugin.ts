@@ -7,7 +7,7 @@ export function audioWorkletPlugin(): Plugin {
         name: 'audioworklet-plugin',
         configureServer(server) {
             // 添加中间件来处理 AudioWorklet 模块请求
-            server.middlewares.use('/audio-processor.js', (req, res) => {
+            server.middlewares.use('/audio-processor.js', (_req, res) => {
                 try {
                     // 从 node_modules 读取 AudioWorklet 处理器文件
                     const processorPath = resolve(
@@ -20,6 +20,7 @@ export function audioWorkletPlugin(): Plugin {
                     res.setHeader('Cache-Control', 'no-cache');
                     res.end(processorCode);
                 } catch (error) {
+                    // eslint-disable-next-line no-console
                     console.error('Failed to serve AudioWorklet processor:', error);
                     res.statusCode = 404;
                     res.end('AudioWorklet processor not found');

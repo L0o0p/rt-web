@@ -6,7 +6,7 @@ import { useAtom } from 'jotai';
 import type { RealTime } from '../RealTime';
 
 export function WebSocketStatusMonitor({ realTime }: WebSocketStatusMonitorProps) {
-    const [isWsConnected, setIsWsConnected] = useAtom(wsConnectedAtom);
+    const [, setIsWsConnected] = useAtom(wsConnectedAtom);
 
     useEffect(() => {
         const voiceChatCore: VoiceChatCore = realTime.getVoiceChatCore();
@@ -25,7 +25,7 @@ export function WebSocketStatusMonitor({ realTime }: WebSocketStatusMonitorProps
             // });
         };
 
-        const handleError = (error: any) => {
+        const handleError = () => {
             // setConnectionStatus({
             //     state: 'error',
             //     message: 'WebSocket连接发生错误',
@@ -34,7 +34,7 @@ export function WebSocketStatusMonitor({ realTime }: WebSocketStatusMonitorProps
         };
 
         // 监听会话创建事件
-        const handleSessionCreated = (data: any) => {
+        const handleSessionCreated = () => {
             // setSessionStatus({
             //     created: true,
             //     sessionId: data.session?.id || null

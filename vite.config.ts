@@ -4,7 +4,14 @@ import { audioWorkletPlugin } from './vite-audioworklet-plugin'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), audioWorkletPlugin()],
+  plugins: [
+    react({
+      // 修复React 19兼容性问题
+      jsxRuntime: 'automatic',
+      jsxImportSource: 'react'
+    }),
+    audioWorkletPlugin()
+  ],
   optimizeDeps: {
     // 避免优化包含 WASM 文件的依赖以及 AudioWorklet 处理器
     exclude: [
@@ -38,11 +45,19 @@ export default defineConfig({
       // 确保 AudioWorklet 处理器不会被打包进主bundle
       external: (id) => {
         return id.includes('audio-processor')
+      },
+      output: {
+        // 确保React被正确打包
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'jotai': ['jotai']
+        }
       }
     }
   },
   // 确保 AudioWorklet 模块可以被正确加载
-  assetsInclude: ['**/*.js'],
+  // 只能包含需要以 asset 方式处理的特定 JS 文件，避免影响 React/Jotai 等依赖解析
+  assetsInclude: ['node_modules/@steelbrain/media-ingest-audio/dist/audio-processor.js'],
   worker: {
     // 保持 ES 模块格式
     format: 'es'

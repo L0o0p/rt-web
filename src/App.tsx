@@ -47,14 +47,15 @@ const downstreamEvents = [
   'response.function_call_result.delta'
 ] as const;
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const realTime = new RealTime()
 
 export const App = () => {
   const [isUserSpeaking, setIsUserSpeaking] = useAtom(isUserSpeakingAtom)
   const hasConnected = useRef(false)
-  const [speechDetected, setSpeechDetected] = useState(false);
-  const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
-  const [vadThreshold, setVadThreshold] = useState(0.5);
+  const [, setSpeechDetected] = useState(false);
+  const [, setSpeechSegmentCount] = useState(0);
+  const [vadThreshold, ] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
   // 展示下行文本（WS返回的文本）
   const [currentText, setCurrentText] = useState('');
@@ -210,25 +211,25 @@ export const App = () => {
     return combined;
   }
 
-  // 音频传输控制
-  const startAudioTransmission = () => {
-    if (transmissionTimerRef.current) return;
+  // // 音频传输控制
+  // const startAudioTransmission = () => {
+  //   if (transmissionTimerRef.current) return;
 
-    const TICK_MS = 50; // 更高精度，带漂移校正
-    nextSendAtRef.current = performance.now();
+  //   const TICK_MS = 50; // 更高精度，带漂移校正
+  //   nextSendAtRef.current = performance.now();
 
-    const tick = async () => {
-      // 注意：这里需要根据实际实现调整
-      // await realTime.transmitAudioData(audioDataBufferRef.current);
-      const now = performance.now();
-      const next = (nextSendAtRef.current ?? now) + TICK_MS;
-      nextSendAtRef.current = next;
-      const delay = Math.max(0, next - now);
-      transmissionTimerRef.current = window.setTimeout(tick, delay);
-    };
+  //   const tick = async () => {
+  //     // 注意：这里需要根据实际实现调整
+  //     // await realTime.transmitAudioData(audioDataBufferRef.current);
+  //     const now = performance.now();
+  //     const next = (nextSendAtRef.current ?? now) + TICK_MS;
+  //     nextSendAtRef.current = next;
+  //     const delay = Math.max(0, next - now);
+  //     transmissionTimerRef.current = window.setTimeout(tick, delay);
+  //   };
 
-    transmissionTimerRef.current = window.setTimeout(tick, 0);
-  };
+  //   transmissionTimerRef.current = window.setTimeout(tick, 0);
+  // };
 
   const stopAudioTransmission = () => {
     if (transmissionTimerRef.current) {

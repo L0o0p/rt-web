@@ -1,5 +1,8 @@
 import { speechFilter, preloadModel } from '@steelbrain/media-speech-detection-web';
-import { ingestAudioStream, RECOMMENDED_AUDIO_CONSTRAINTS } from './customIngestAudioStream';
+import {
+    createWebRTCAudioStream,
+    type WebRTCAudioOptions
+} from './customIngestAudioStream';
 
 export class AudioRecorder {
     private mediaStream: MediaStream | null = null;
@@ -15,6 +18,14 @@ export class AudioRecorder {
 
     // 音频数据回调，供外部收集音频
     private onAudioDataCallback: ((audioData: Float32Array) => void) | null = null;
+
+    // WebRTC 回声消除选项
+    private webrtcOptions: WebRTCAudioOptions = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        enableAdvancedProcessing: false
+    };
 
     constructor() {
         // 预加载VAD模型（在后台进行）
@@ -70,7 +81,51 @@ export class AudioRecorder {
     }
 
     /**
-     * 获取音频流用于VAD处理
+     * 配置 WebRTC 音频处理选项
+     * @param options WebRTC 音频选项
+     */
+    configureWebRTCAudio(options: Partial<WebRTCAudioOptions>): void {
+        this.webrtcOptions = { ...this.webrtcOptions, ...options };
+        console.log("AudioRecorder: WebRTC audio options updated:", this.webrtcOptions);
+    }
+
+    /**
+     * 设置回声消除状态
+     * @param enabled 是否启用回声消除
+     */
+    setEchoCancellation(enabled: boolean): void {
+        this.webrtcOptions.echoCancellation = enabled;
+        console.log("AudioRecorder: Echo cancellation set to:", enabled);
+    }
+
+    /**
+     * 设置噪声抑制状态
+     * @param enabled 是否启用噪声抑制
+     */
+    setNoiseSuppression(enabled: boolean): void {
+        this.webrtcOptions.noiseSuppression = enabled;
+        console.log("AudioRecorder: Noise suppression set to:", enabled);
+    }
+
+    /**
+     * 设置自动增益控制状态
+     * @param enabled 是否启用自动增益控制
+     */
+    setAutoGainControl(enabled: boolean): void {
+        this.webrtcOptions.autoGainControl = enabled;
+        console.log("AudioRecorder: Auto gain control set to:", enabled);
+    }
+
+    /**
+     * 获取当前 WebRTC 音频配置
+     * @returns 当前的 WebRTC 音频选项
+     */
+    getWebRTCConfig(): WebRTCAudioOptions {
+        return { ...this.webrtcOptions };
+    }
+
+    /**
+     * 获取带有 WebRTC 回声消除功能的音频流
      * @param deviceId 可选的设备ID
      * @returns 音频流
      */
@@ -80,20 +135,20 @@ export class AudioRecorder {
             throw new Error('浏览器不支持getUserMedia API');
         }
 
-        // 获取媒体流
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                ...RECOMMENDED_AUDIO_CONSTRAINTS
-            }
-        };
-        this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log("[AUDIO STREAM] Creating WebRTC audio stream with echo cancellation...");
+        console.log("[AUDIO STREAM] WebRTC options:", this.webrtcOptions);
 
-        // 使用推荐的ingestAudioStream创建16kHz音频流
-        console.log("[AUDIO STREAM] Creating audio stream using ingestAudioStream");
-        this.audioStream = await ingestAudioStream(this.mediaStream);
-        console.log("[AUDIO STREAM] Audio stream created successfully using ingestAudioStream");
-        return this.audioStream!;
+        // 使用 WebRTC 回声消除功能创建音频流
+        const result = await createWebRTCAudioStream(deviceId, {
+            ...this.webrtcOptions,
+            sampleRate: 16000,  // 确保使用16kHz采样率
+        });
+
+        this.mediaStream = result.mediaStream;
+        this.audioStream = result.audioStream;
+
+        console.log("[AUDIO STREAM] WebRTC audio stream created successfully with echo cancellation");
+        return this.audioStream;
     }
 
     /**
@@ -246,14 +301,14 @@ export class AudioRecorder {
                     uint8Data[i * 2] = int16Value & 0xFF;          // 低字节
                     uint8Data[i * 2 + 1] = (int16Value >> 8) & 0xFF; // 高字节
                 }
-                
+
                 console.log("[AudioRecorder] Converting audio data - Input length:", audioData.length, "samples, Output length:", uint8Data.length, "bytes");
-                
+
                 // 验证输出数据是否符合预期
                 if (uint8Data.length !== audioData.length * 2) {
                     console.warn("[AudioRecorder] Warning: Output data size mismatch - expected:", audioData.length * 2, "actual:", uint8Data.length);
                 }
-                
+
                 // 检查数据是否为空
                 if (uint8Data.length === 0) {
                     console.warn("[AudioRecorder] Warning: Empty audio data generated");

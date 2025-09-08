@@ -48,73 +48,8 @@ $secondary-color: #ffffff;
     }
 }
 
-.squadyUIRipple {
-    &::before {
-        content: '';
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 0;
-        height: 0;
-        border-radius: 50%;
-        background: rgba(120, 124, 240, 0.8);
-        border: 3px solid rgba(255, 255, 255, 0.9);
-        transform: translate(-50%, -50%);
-        animation: ripple 1.5s infinite;
-        z-index: -1;
-    }
-
-    &::after {
-        content: '';
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 0;
-        height: 0;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.6);
-        border: 2px solid rgba(120, 124, 240, 0.8);
-        transform: translate(-50%, -50%);
-        animation: ripple 1.5s infinite 0.2s;
-        z-index: -1;
-    }
-}
-
-@keyframes ripple {
-    0% {
-        width: 80px;
-        height: 80px;
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(0.5);
-    }
-
-    25% {
-        width: 180px;
-        height: 180px;
-        opacity: 0.9;
-        transform: translate(-50%, -50%) scale(0.8);
-    }
-
-    50% {
-        width: 280px;
-        height: 280px;
-        opacity: 0.7;
-        transform: translate(-50%, -50%) scale(1.0);
-    }
-
-    75% {
-        width: 380px;
-        height: 380px;
-        opacity: 0.4;
-        transform: translate(-50%, -50%) scale(1.2);
-    }
-
-    100% {
-        width: 450px;
-        height: 450px;
-        opacity: 0;
-        transform: translate(-50%, -50%) scale(1.4);
-    }
+.squadyUIText{
+    display: flex;
 }
 
 .audioVisualizerSection {

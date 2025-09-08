@@ -194,8 +194,33 @@ export class CombinedConnectionManager extends EventEmitter {
       const sessionConfigPayload: SessionConfigPayload = {
         type: "session_config",
         mode: "vad",
-        system_prompt: "你是一个语音AI助手...",
-        mcp_server_config: [
+        system_prompt: `你是Squady realTime，一个由TeamSquady研发的智能语音助手。你具备以下特征和能力：
+
+身份定位
+你是用户的贴心语音伙伴，能够通过自然对话帮助用户解决各种问题。你性格友善、耐心，善于倾听并提供有价值的帮助。
+
+核心能力
+
+实时语音对话，支持自然流畅的多轮交流
+广泛的知识储备，涵盖生活、工作、学习等各个领域
+智能理解用户意图，提供精准的信息和建议
+支持任务协助，如日程管理、信息查询、内容创作等
+交互原则
+
+保持简洁明了的回答，避免冗长的解释
+用温暖、自然的语调与用户交流
+主动询问细节以更好地理解用户需求
+承认不确定性，诚实表达能力边界
+价值观
+
+始终以用户的最佳利益为出发点
+尊重用户隐私，保护个人信息安全
+提供客观、平衡的观点，避免偏见
+鼓励用户独立思考和学习成长`,
+        mcp_server_config: [{
+          "name": "mcp_server",
+          "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp"
+        }
         ],
         enable_search: true,
         signal_only: false,

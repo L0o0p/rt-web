@@ -7,6 +7,39 @@ import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
 import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent } from './sdk/protocol/ClientProtocol';
 
+// 定义下行事件常量（参考 ClientProtocol.ts 中的服务端事件）
+const downstreamEvents = [
+  'session.created',
+  'conversation.item.created',
+  'conversation.item.updated',
+  'input_audio_buffer.speech_started',
+  'input_audio_buffer.speech_stopped',
+  'conversation.item.input_audio_transcription.delta',
+  'conversation.item.input_audio_transcription.completed',
+  'response.created',
+  'response.text.delta',
+  'response.text.done',
+  'response.audio.delta',
+  'response.audio.done',
+  'response.output_item.added',
+  'response.output_item.done',
+  'response.done',
+  'conversation.item.truncated',
+  'output_audio_buffer.started',
+  'output_audio_buffer.stopped',
+  'error.event',
+  'output_audio_buffer.cleared',
+  'conversation.item.input_audio_transcription.failed',
+  'response.function_call_arguments.delta',
+  'response.function_call_arguments.done',
+  'response.function_call_result.done',
+  'session.update',
+  'response.cancel',
+  'response.function_call.delta',
+  'response.function_call.done',
+  'response.function_call_result.delta'
+] as const;
+
 // 在组件外部创建RealTime实例，确保在整个应用生命周期中保持一致
 const realTime = new RealTime()
 
@@ -152,39 +185,6 @@ function App() {
 
     if (voiceChatCore) {
       voiceChatCore.on('audio_chunk', handleAudioDataReceived);
-
-      // 监听所有下行信令（参考 ClientProtocol.ts 中的服务端事件）
-      const downstreamEvents = [
-        'session.created',
-        'conversation.item.created',
-        'conversation.item.updated',
-        'input_audio_buffer.speech_started',
-        'input_audio_buffer.speech_stopped',
-        'conversation.item.input_audio_transcription.delta',
-        'conversation.item.input_audio_transcription.completed',
-        'response.created',
-        'response.text.delta',
-        'response.text.done',
-        'response.audio.delta',
-        'response.audio.done',
-        'response.output_item.added',
-        'response.output_item.done',
-        'response.done',
-        'conversation.item.truncated',
-        'output_audio_buffer.started',
-        'output_audio_buffer.stopped',
-        'error.event',
-        'output_audio_buffer.cleared',
-        'conversation.item.input_audio_transcription.failed',
-        'response.function_call_arguments.delta',
-        'response.function_call_arguments.done',
-        'response.function_call_result.done',
-        'session.update',
-        'response.cancel',
-        'response.function_call.delta',
-        'response.function_call.done',
-        'response.function_call_result.delta'
-      ] as const;
 
       const handlers = new Map<string, (payload: unknown) => void>();
       // 按 response_id 缓冲PCM字节，基于时间阈值（50ms）聚合后播放

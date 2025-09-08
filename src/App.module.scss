@@ -158,3 +158,102 @@ body {
         font-style: italic;
     }
 }
+
+
+.performanceMonitor {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 280px;
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 1000;
+    font-size: 14px;
+
+    h4 {
+        margin: 0 0 12px 0;
+        font-size: 16px;
+        text-align: center;
+        color: #4CAF50;
+    }
+}
+
+.metricsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.metric {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metricLabel {
+    font-size: 11px;
+    color: #aaa;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.metricValue {
+    font-size: 18px;
+    font-weight: bold;
+    color: #4CAF50;
+}
+
+.responseTrend {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 12px;
+}
+
+.trendLabel {
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.trendBars {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    height: 50px;
+    gap: 2px;
+}
+
+.trendBar {
+    flex: 1;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    transition: all 0.3s ease;
+
+    &:hover {
+        opacity: 0.8;
+    }
+}
+
+// 响应状态颜色指示
+.metricValue {
+    &.excellent {
+        color: #4CAF50; // < 1秒：绿色
+    }
+
+    &.good {
+        color: #FF9800; // 1-2秒：橙色
+    }
+
+    &.poor {
+        color: #F44336; // > 2秒：红色
+    }
+}

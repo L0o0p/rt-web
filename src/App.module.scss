@@ -46,7 +46,7 @@ body {
         height: 100vh;
         padding: 0;
         gap: 1rem;
-        justify-content: space-between;
+        justify-content: center;
     }
 
     @media (max-width: 480px) {
@@ -180,13 +180,13 @@ body {
 
     // 移动端适配
     @media (max-width: 768px) {
-        flex: 1;
+        flex: none;
         width: 100%;
         min-height: 0;
     }
 
     @media (max-width: 480px) {
-        flex: 1;
+        flex: none;
     }
 }
 

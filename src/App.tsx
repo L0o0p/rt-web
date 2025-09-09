@@ -372,6 +372,7 @@ export const App = () => {
       // ========== 高精度性能监控监听器 ==========
       const connectionManager = voiceChatCore?.getConnectionManager();
       if (connectionManager) {
+        console.log(`[DEBUG] 注册高精度性能监听器`);
         // 监听高精度延迟测量完成事件
         connectionManager.on('performance:latency:measured', (metric: {
           type: string;
@@ -384,7 +385,9 @@ export const App = () => {
 
           // 更新UI显示
           if (metric.type === 'response.audio.delta') {
+            console.log(`[DEBUG] 高精度计时器触发，准备更新计数`);
             setResponseMetrics(prev => {
+              console.log(`[DEBUG] 当前对话轮次: ${prev.totalInteractions} -> ${prev.totalInteractions + 1}`);
               const newAudioTimes = [...prev.audioResponseTimes, metric.latency].slice(-50);
               const avgAudio = newAudioTimes.reduce((sum: number, time: number) => sum + time, 0) / newAudioTimes.length;
 
@@ -409,7 +412,8 @@ export const App = () => {
       const FLUSH_INTERVAL_MS = 50; // 目标缓冲时长 ~50ms
 
       const flushPlay = (responseId: string, now: number = performance.now()) => {
-        if (!audioPlayerRef.current || !isPlayingDownstreamAudio) return;
+        // 动态检查音频播放状态和播放器实例
+        if (!audioPlayerRef.current) return;
         const state = pcmBuffersRef.get(responseId);
         if (!state || state.chunks.length === 0) return;
         const list = state.chunks;
@@ -485,27 +489,21 @@ export const App = () => {
             const evt = payload as ResponseAudioDeltaEvent;
             if (!evt || typeof evt.delta !== 'string') return;
 
-            // ========== 响应延迟计算 ==========
-            // 当收到第一个 response.audio.delta 时，定格计算延迟
+            // ========== 兼容性响应延迟计算 ==========
+            // 备用计时方式（以防高精度计时器失效）
             if (speechStartTimeRef.current && !hasRecordedResponse.current) {
               const audioLatency = performance.now() - speechStartTimeRef.current;
               hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
 
-              console.log(`[PERF MONITOR] 收到音频响应，延迟: ${audioLatency.toFixed(2)}ms`);
+              console.log(`[DEBUG] 兼容性计时器触发 - 延迟: ${audioLatency.toFixed(2)}ms`);
+              console.log(`[DEBUG] 兼容性计时器 - 不更新对话轮次计数`);
 
-              setResponseMetrics(prev => {
-                const newAudioTimes = [...prev.audioResponseTimes, audioLatency].slice(-50); // 保留最近50次
-                const avgAudio = newAudioTimes.reduce((sum, time) => sum + time, 0) / newAudioTimes.length;
-
-                return {
-                  ...prev,
-                  audioResponseTimes: newAudioTimes,
-                  averageAudioLatency: avgAudio,
-                  lastAudioLatency: audioLatency,
-                  totalInteractions: prev.totalInteractions + 1,
-                  isTimingActive: false // 计时完成，关闭计时状态
-                };
-              });
+              // 注意：只在高精度计时器未工作时才更新状态，避免重复计算对话轮次
+              // 高精度计时器会通过 performance:latency:measured 事件更新状态
+              setResponseMetrics(prev => ({
+                ...prev,
+                isTimingActive: false // 确保计时状态正确
+              }));
             }
 
             try {
@@ -564,14 +562,38 @@ export const App = () => {
 
       // 清理
       return () => {
+        console.log(`[DEBUG] 清理事件监听器`);
         audioManagerRef.current?.removeAllListeners();
         stopAudioTransmission();
         voiceChatCore.off('audio_chunk', handleAudioDataReceived);
         handlers.forEach((h, name) => voiceChatCore.off(name, h));
+
+        // 清理高精度性能监听器
+        if (connectionManager) {
+          connectionManager.removeAllListeners('performance:latency:measured');
+          console.log(`[DEBUG] 已清理高精度性能监听器`);
+        }
       };
     }
 
     return undefined;
+  }, []); // 只在组件挂载时执行一次
+
+  // 单独处理音频播放状态变化
+  useEffect(() => {
+    // 确保audioPlayer的状态正确初始化
+    if (isPlayingDownstreamAudio) {
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new AudioPlayer();
+        console.log('[AUDIO] AudioPlayer 初始化完成');
+      }
+    } else {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.stopPlayback();
+        audioPlayerRef.current = null;
+        console.log('[AUDIO] AudioPlayer 已停止并清理');
+      }
+    }
   }, [isPlayingDownstreamAudio]);
 
   // 获取延迟颜色类名的函数

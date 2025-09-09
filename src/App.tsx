@@ -717,6 +717,7 @@ const SquadyUI: React.FC<SquadyUIProps> = ({ onToggleRecording }) => {
         <div>{text}</div>
         <StatusPoint />
       </div>
+      <div className={styles.squadySubtext}>点击开始对话</div>
     </div>
   )
 }

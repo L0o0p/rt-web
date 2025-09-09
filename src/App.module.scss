@@ -65,7 +65,7 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 1rem;
+    gap: .2rem;
     position: relative;
     z-index: 10;
 
@@ -135,6 +135,36 @@ body {
 
 .squadyUIText {
     display: flex;
+}
+
+.squadySubtext {
+    font-size: 20px;
+    color: #ffffff;
+    font-weight: 400;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    animation: fadeInUp 1s ease-out 0.5s forwards;
+
+    @media (max-width: 480px) {
+        font-size: 12px;
+    }
+
+    @media (max-width: 360px) {
+        font-size: 11px;
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 0.8;
+        transform: translateY(0);
+    }
 }
 
 .audioVisualizerSection {
@@ -267,7 +297,7 @@ body {
         max-height: 120px;
         min-height: 40px;
         margin: 0 0.25rem;
-        max-width: calc(100% - 0.5rem);
+        max-width: calc(100% - 0.2rem);
     }
 
     // 自定义滚动条样式

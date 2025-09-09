@@ -588,13 +588,13 @@ export const App = () => {
         {isUserSpeaking && (
           <div className={styles.audioVisualizerOverlay}>
             <LiveAudioVisualizerComponent
-              width={700}
-              height={200}
+              width={window.innerWidth > 768 ? 700 : window.innerWidth > 480 ? 350 : 280}
+              height={window.innerWidth > 768 ? 200 : window.innerWidth > 480 ? 150 : 120}
               barColor="#ffffff"
               smoothingTimeConstant={0.8}
               fftSize={512}
-              barWidth={3}
-              gap={2}
+              barWidth={window.innerWidth > 480 ? 3 : 2}
+              gap={window.innerWidth > 480 ? 2 : 1}
               isRecording={isUserSpeaking}
             />
           </div>

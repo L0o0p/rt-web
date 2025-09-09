@@ -99,6 +99,14 @@ export const App = () => {
   const transmissionTimerRef = useRef<number | null>(null);
   const nextSendAtRef = useRef<number | null>(null);
 
+  // 性能监控显示控制
+  const [isPerformanceMonitorVisible, setIsPerformanceMonitorVisible] = useState(true);
+
+  // 切换性能监控显示
+  const togglePerformanceMonitor = () => {
+    setIsPerformanceMonitorVisible(!isPerformanceMonitorVisible);
+  };
+
   const connect = async () => {
     if (hasConnected.current) return
     hasConnected.current = true
@@ -267,6 +275,7 @@ export const App = () => {
   useEffect(() => {
     connect()
     toggleDownstreamAudioPlayback()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -625,64 +634,74 @@ export const App = () => {
       </div>
 
       {/* 实时响应速度监控显示 */}
-      <div className={styles.performanceMonitor}>
-        <h4>实时响应监控</h4>
-        <div className={styles.metricsGrid}>
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>平均音频延迟</span>
-            <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
-              {responseMetrics.averageAudioLatency > 0
-                ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
-                : '--'}
-            </span>
-          </div>
-
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>最近音频延迟</span>
-            <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
-              {responseMetrics.lastAudioLatency > 0
-                ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
-                : '--'}
-            </span>
-          </div>
-
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>对话轮次</span>
-            <span className={styles.metricValue}>
-              {responseMetrics.totalInteractions}
-            </span>
-          </div>
-
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>计时精度</span>
-            <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
-              {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
-            </span>
-          </div>
+      <div className={`${styles.performanceMonitor} ${isPerformanceMonitorVisible ? styles.visible : styles.hidden}`}>
+        <div className={styles.performanceHeader} onClick={togglePerformanceMonitor}>
+          <h4>实时响应监控</h4>
+          <button className={styles.toggleButton} type="button">
+            {isPerformanceMonitorVisible ? '−' : '+'}
+          </button>
         </div>
 
-        {/* 响应时间趋势图 */}
-        {responseMetrics.audioResponseTimes.length > 1 && (
-          <div className={styles.responseTrend}>
-            <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
-            <div className={styles.trendBars}>
-              {responseMetrics.audioResponseTimes.slice(-10).map((time, index) => (
-                <div
-                  key={index}
-                  className={styles.trendBar}
-                  style={{
-                    height: `${Math.min(time / 20, 50)}px`,
-                    backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
-                  }}
-                  title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
-                />
-              ))}
+        {isPerformanceMonitorVisible && (
+          <div className={styles.performanceContent}>
+            <div className={styles.metricsGrid}>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>平均音频延迟</span>
+                <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
+                  {responseMetrics.averageAudioLatency > 0
+                    ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
+                    : '--'}
+                </span>
+              </div>
+
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>最近音频延迟</span>
+                <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
+                  {responseMetrics.lastAudioLatency > 0
+                    ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
+                    : '--'}
+                </span>
+              </div>
+
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>对话轮次</span>
+                <span className={styles.metricValue}>
+                  {responseMetrics.totalInteractions}
+                </span>
+              </div>
+
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>计时精度</span>
+                <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
+                  {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
+                </span>
+              </div>
             </div>
-            <div className={styles.trendStats}>
-              <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
-              <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
-              <span>精度: 1ms</span>
-            </div>
+
+            {/* 响应时间趋势图 */}
+            {responseMetrics.audioResponseTimes.length > 1 && (
+              <div className={styles.responseTrend}>
+                <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
+                <div className={styles.trendBars}>
+                  {responseMetrics.audioResponseTimes.slice(-10).map((time, index) => (
+                    <div
+                      key={index}
+                      className={styles.trendBar}
+                      style={{
+                        height: `${Math.min(time / 20, 50)}px`,
+                        backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
+                      }}
+                      title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
+                    />
+                  ))}
+                </div>
+                <div className={styles.trendStats}>
+                  <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
+                  <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
+                  <span>精度: 1ms</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

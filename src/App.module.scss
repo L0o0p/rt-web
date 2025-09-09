@@ -348,17 +348,29 @@ body {
     width: 280px;
     background: rgba(0, 0, 0, 0.85);
     color: white;
-    padding: 15px;
     border-radius: 8px;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     z-index: 1000;
     font-size: 14px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+
+    &.visible {
+        opacity: 1;
+        transform: translateX(0);
+        max-height: 500px;
+    }
+
+    &.hidden {
+        opacity: 0.8;
+        transform: translateX(10px);
+        max-height: 60px;
+    }
 
     h4 {
-        margin: 0 0 12px 0;
+        margin: 0;
         font-size: 16px;
-        text-align: center;
         color: #4CAF50;
     }
 
@@ -407,6 +419,93 @@ body {
             font-size: 11px;
             margin-bottom: 3px;
         }
+    }
+}
+
+.performanceHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s ease;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    // 移动端适配
+    @media (max-width: 768px) {
+        padding: 12px;
+    }
+
+    @media (max-width: 480px) {
+        padding: 8px;
+    }
+
+    @media (max-width: 360px) {
+        padding: 6px;
+    }
+}
+
+.toggleButton {
+    background: none;
+    border: none;
+    color: #4CAF50;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    transition: all 0.2s ease;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+
+    &:hover {
+        background-color: rgba(76, 175, 80, 0.1);
+        transform: scale(1.1);
+    }
+
+    &:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
+    }
+
+    // 移动端适配
+    @media (max-width: 480px) {
+        font-size: 18px;
+        width: 20px;
+        height: 20px;
+    }
+
+    @media (max-width: 360px) {
+        font-size: 16px;
+        width: 18px;
+        height: 18px;
+    }
+}
+
+.performanceContent {
+    padding: 0 15px 15px 15px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    // 移动端适配
+    @media (max-width: 768px) {
+        padding: 0 12px 12px 12px;
+    }
+
+    @media (max-width: 480px) {
+        padding: 0 8px 8px 8px;
+    }
+
+    @media (max-width: 360px) {
+        padding: 0 6px 6px 6px;
     }
 }
 

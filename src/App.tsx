@@ -638,7 +638,7 @@ export const App = () => {
         <div className={styles.performanceHeader} onClick={togglePerformanceMonitor}>
           <h4>实时响应监控</h4>
           <button className={styles.toggleButton} type="button">
-            {isPerformanceMonitorVisible ? '−' : '+'}
+            {isPerformanceMonitorVisible ? '−' : '📊'}
           </button>
         </div>
 

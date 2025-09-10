@@ -13,7 +13,6 @@ import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStart
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
-import { Console, Decode, Hook } from 'console-feed'
 import type { VoiceChatCore } from './sdk'
 
 // 趋势图组件
@@ -752,37 +751,6 @@ export const App = () => {
           {currentText || finalTexts[0] || ''}
         </ReactMarkdown>
       </div>
-      <ConsoleDom />
     </div>
   )
 }
-
-const ConsoleDom = React.memo(function ConsoleDom() {
-  // 优化内联样式，避免每次渲染重新创建对象
-  const consoleStyles = useMemo(() => ({
-    backgroundColor: 'black',
-    height: '300px',
-    minWidth: '200px',
-    overflow: 'auto' as const,
-    border: '1px solid #333',
-    marginBottom: '10px',
-  }), []);
-
-  const [logs, setLogs] = useAtom(logsAtom)
-  useEffect(() => {
-    setTimeout(() => {
-
-      Hook(window.console, (log) => {
-        setLogs((prev) => [...prev, Decode(log)])
-      })
-    }, 100)
-  }, [])
-  return (
-    <div style={consoleStyles}>
-      <Console logs={logs} styles={{
-        BASE_FONT_SIZE: '12px'
-
-      }} variant='dark' />
-    </div>
-  )
-})

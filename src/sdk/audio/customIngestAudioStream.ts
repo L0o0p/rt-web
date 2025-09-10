@@ -105,41 +105,6 @@ export async function detectBestSampleRate(deviceId?: string): Promise<number> {
     }
 }
 
-/**
- * 简单的线性插值重采样函数
- * @param inputBuffer 输入音频数据
- * @param inputSampleRate 输入采样率
- * @param outputSampleRate 输出采样率
- * @returns 重采样后的音频数据
- */
-function resampleAudioBuffer(
-    inputBuffer: Float32Array,
-    inputSampleRate: number,
-    outputSampleRate: number
-): Float32Array {
-    if (inputSampleRate === outputSampleRate) {
-        return inputBuffer;
-    }
-
-    const ratio = inputSampleRate / outputSampleRate;
-    const outputLength = Math.round(inputBuffer.length / ratio);
-    const outputBuffer = new Float32Array(outputLength);
-
-    for (let i = 0; i < outputLength; i++) {
-        const position = i * ratio;
-        const index = Math.floor(position);
-        const fraction = position - index;
-
-        if (index + 1 < inputBuffer.length) {
-            // 线性插值
-            outputBuffer[i] = inputBuffer[index] * (1 - fraction) + inputBuffer[index + 1] * fraction;
-        } else {
-            outputBuffer[i] = inputBuffer[index] || 0;
-        }
-    }
-
-    return outputBuffer;
-}
 
 /**
  * 自定义的 ingestAudioStream 实现，解决 Vite 中 AudioWorklet 模块加载问题
@@ -298,84 +263,53 @@ export async function ingestAudioStream(
                     throw new Error(`Failed to load AudioWorklet module: ${moduleError instanceof Error ? moduleError.message : moduleError}`);
                 }
 
-                // 创建worklet节点，带有增益和通道ID参数
+                // 准备worklet参数
+                const inputSampleRate = options.sampleRate ?? 16000;
+                const outputSampleRate = options.targetSampleRate ?? inputSampleRate;
+                const targetBufferSize = 1024; // 固定使用1024样本缓冲区
+
+                // 创建worklet节点，传递所有必要参数
                 console.log('[Audio Worklet] Creating AudioWorkletNode...');
                 workletNode = new AudioWorkletNode(audioContext, 'resampler-processor', {
                     processorOptions: {
                         gain: options.gain ?? 1.0,
                         channelId: options.channelId ?? 0,
+                        inputSampleRate: inputSampleRate,
+                        targetSampleRate: outputSampleRate,
+                        targetBufferSize: targetBufferSize,
                     },
                 });
                 console.log('[Audio Worklet] ✅ AudioWorkletNode created');
 
-                // 监听处理后的音频数据
-                let dataChunkCount = 0;
-                const inputSampleRate = options.sampleRate ?? 16000;
-                const outputSampleRate = options.targetSampleRate ?? inputSampleRate;
-                const needsResampling = inputSampleRate !== outputSampleRate;
-
-                // 检测移动设备
+                // 监听来自worklet的消息
+                let processedChunkCount = 0;
                 const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-                // 音频缓冲区 - 累积音频数据再发送
-                let audioBuffer = new Float32Array(0);
-                // 固定使用1024样本的缓冲区
-                // 16kHz下，1024样本 = 64ms
-                const targetBufferSize = 1024;
-
-                if (needsResampling) {
-                    console.log(`[Audio Worklet] Resampling enabled: ${inputSampleRate}Hz -> ${outputSampleRate}Hz`);
-                }
-
-                console.log(`[Audio Worklet] Using buffer size: ${targetBufferSize} samples (${(targetBufferSize / outputSampleRate * 1000).toFixed(1)}ms)`);
-                if (isMobile) {
-                    console.log(`[Audio Worklet] Mobile device detected - using optimized settings`);
-                }
+                const logInterval = isMobile ? 50 : 20; // 移动设备减少日志频率
 
                 workletNode.port.onmessage = event => {
-                    if (event.data.type === 'audioData') {
-                        dataChunkCount++;
-                        // 移动设备减少日志输出频率
-                        const logInterval = isMobile ? 500 : 200;
-                        if (dataChunkCount <= 3 || dataChunkCount % logInterval === 0) {
-                            console.log(`[Audio Worklet] Received audio data chunk #${dataChunkCount}, length:`, event.data.data.length);
+                    const { type, data } = event.data;
+
+                    if (type === 'init') {
+                        // Worklet初始化完成
+                        console.log('[Audio Worklet] ✅ Processor initialized:', {
+                            inputSampleRate: data.inputSampleRate || event.data.inputSampleRate,
+                            targetSampleRate: data.targetSampleRate || event.data.targetSampleRate,
+                            targetBufferSize: data.targetBufferSize || event.data.targetBufferSize,
+                            needsResampling: data.needsResampling || event.data.needsResampling
+                        });
+                    } else if (type === 'audioData') {
+                        // 接收处理好的音频数据
+                        processedChunkCount++;
+
+                        if (processedChunkCount <= 3 || processedChunkCount % logInterval === 0) {
+                            console.log(`[Audio Worklet] Received processed chunk #${processedChunkCount}, size: ${data.length} samples`);
                         }
+
                         try {
-                            let audioData = event.data.data;
-
-                            // 如果需要重采样，进行重采样处理
-                            if (needsResampling) {
-                                audioData = resampleAudioBuffer(audioData, inputSampleRate, outputSampleRate);
-                                if (dataChunkCount <= 3) {
-                                    console.log(`[Audio Worklet] Resampled chunk #${dataChunkCount}: ${event.data.data.length} -> ${audioData.length} samples`);
-                                }
-                            }
-
-                            // 将新数据追加到缓冲区 - 优化内存分配
-                            if (audioBuffer.length === 0) {
-                                audioBuffer = audioData;
-                            } else {
-                                const newBuffer = new Float32Array(audioBuffer.length + audioData.length);
-                                newBuffer.set(audioBuffer);
-                                newBuffer.set(audioData, audioBuffer.length);
-                                audioBuffer = newBuffer;
-                            }
-
-                            // 当缓冲区达到目标大小时，发送数据
-                            while (audioBuffer.length >= targetBufferSize) {
-                                const chunkToSend = audioBuffer.slice(0, targetBufferSize);
-                                audioBuffer = audioBuffer.slice(targetBufferSize);
-
-                                if (dataChunkCount <= 3) {
-                                    console.log(`[Audio Worklet] Sending buffered chunk with ${chunkToSend.length} samples`);
-                                }
-
-                                controller.enqueue(chunkToSend);
-                            }
-
+                            // 直接将处理好的数据发送到流
+                            controller.enqueue(data);
                         } catch (e) {
-                            console.error('[Audio Worklet] Failed to enqueue audio data:', e);
-                            // 流已关闭/取消，清理资源
+                            console.error('[Audio Worklet] Failed to enqueue processed audio data:', e);
                             cleanup();
                         }
                     }

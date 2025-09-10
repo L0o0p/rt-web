@@ -41,9 +41,20 @@ export const ADVANCED_AUDIO_CONSTRAINTS = Object.freeze({
 export async function detectBestSampleRate(deviceId?: string): Promise<number> {
     console.log('[Audio Detection] Detecting best sample rate for device...');
 
+    // 检查基本的 API 支持
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('[Audio Detection] MediaDevices API not supported');
+        return 44100; // 最常见的默认值
+    }
+
     // 尝试每个首选采样率，找到第一个支持的
     for (const sampleRate of PREFERRED_SAMPLE_RATES) {
         try {
+            // 添加超时机制，防止移动设备上的长时间等待
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout')), 5000)
+            );
+
             const constraints = {
                 audio: {
                     deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -52,7 +63,11 @@ export async function detectBestSampleRate(deviceId?: string): Promise<number> {
                 }
             };
 
-            const testStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const testStream = await Promise.race([
+                navigator.mediaDevices.getUserMedia(constraints),
+                timeoutPromise
+            ]);
+
             const audioTrack = testStream.getAudioTracks()[0];
             const settings = audioTrack.getSettings();
 
@@ -91,6 +106,42 @@ export async function detectBestSampleRate(deviceId?: string): Promise<number> {
 }
 
 /**
+ * 简单的线性插值重采样函数
+ * @param inputBuffer 输入音频数据
+ * @param inputSampleRate 输入采样率
+ * @param outputSampleRate 输出采样率
+ * @returns 重采样后的音频数据
+ */
+function resampleAudioBuffer(
+    inputBuffer: Float32Array,
+    inputSampleRate: number,
+    outputSampleRate: number
+): Float32Array {
+    if (inputSampleRate === outputSampleRate) {
+        return inputBuffer;
+    }
+
+    const ratio = inputSampleRate / outputSampleRate;
+    const outputLength = Math.round(inputBuffer.length / ratio);
+    const outputBuffer = new Float32Array(outputLength);
+
+    for (let i = 0; i < outputLength; i++) {
+        const position = i * ratio;
+        const index = Math.floor(position);
+        const fraction = position - index;
+
+        if (index + 1 < inputBuffer.length) {
+            // 线性插值
+            outputBuffer[i] = inputBuffer[index] * (1 - fraction) + inputBuffer[index + 1] * fraction;
+        } else {
+            outputBuffer[i] = inputBuffer[index] || 0;
+        }
+    }
+
+    return outputBuffer;
+}
+
+/**
  * 自定义的 ingestAudioStream 实现，解决 Vite 中 AudioWorklet 模块加载问题
  */
 /**
@@ -100,6 +151,7 @@ export interface WebRTCAudioOptions {
     gain?: number;
     channelId?: number;
     sampleRate?: number;
+    targetSampleRate?: number; // 目标输出采样率，用于重采样
     // WebRTC 回声消除相关选项
     echoCancellation?: boolean | { exact: boolean };
     noiseSuppression?: boolean | { exact: boolean };
@@ -118,12 +170,23 @@ export async function createWebRTCAudioStream(
     deviceId?: string,
     options: WebRTCAudioOptions = {}
 ): Promise<{ mediaStream: MediaStream; audioStream: ReadableStream<Float32Array> }> {
+    // 检测移动设备并调整配置
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+        console.log('[WebRTC Audio] Mobile device detected, using optimized settings');
+    }
+
     // 如果未指定采样率，先检测设备支持的最佳采样率
     let targetSampleRate = options.sampleRate;
     if (!targetSampleRate) {
         console.log('[WebRTC Audio] No sample rate specified, detecting best supported sample rate...');
-        targetSampleRate = await detectBestSampleRate(deviceId);
-        console.log(`[WebRTC Audio] Will use detected sample rate: ${targetSampleRate}Hz`);
+        try {
+            targetSampleRate = await detectBestSampleRate(deviceId);
+            console.log(`[WebRTC Audio] Will use detected sample rate: ${targetSampleRate}Hz`);
+        } catch (error) {
+            console.error('[WebRTC Audio] Failed to detect sample rate, using fallback:', error);
+            targetSampleRate = isMobile ? 44100 : 16000; // 移动设备使用更安全的44.1kHz
+        }
     }
 
     // 构建音频约束，使用检测到的采样率
@@ -173,11 +236,18 @@ export async function createWebRTCAudioStream(
         }
     }
 
-    // 创建音频流，传递实际使用的采样率
+    // 创建音频流，传递实际使用的采样率和目标采样率
     const actualSampleRate = audioTrack?.getSettings().sampleRate || targetSampleRate;
+    const outputSampleRate = options.targetSampleRate || actualSampleRate;
+
+    if (actualSampleRate !== outputSampleRate) {
+        console.log(`[WebRTC Audio] Will resample from ${actualSampleRate}Hz to ${outputSampleRate}Hz`);
+    }
+
     const audioStream = await ingestAudioStream(mediaStream, {
         ...options,
-        sampleRate: actualSampleRate
+        sampleRate: actualSampleRate,
+        targetSampleRate: outputSampleRate
     });
 
     return { mediaStream, audioStream };
@@ -189,6 +259,7 @@ export async function ingestAudioStream(
         gain?: number;
         channelId?: number;
         sampleRate?: number;
+        targetSampleRate?: number;
     } = {}
 ): Promise<ReadableStream<Float32Array>> {
     if (!mediaStream.getAudioTracks().length) {
@@ -213,26 +284,60 @@ export async function ingestAudioStream(
         start: async (controller) => {
             try {
                 // 使用配置的采样率，默认16kHz
+                console.log('[Audio Worklet] Creating AudioContext with sample rate:', options.sampleRate ?? 16000);
                 audioContext = new AudioContext({ sampleRate: options.sampleRate ?? 16000 });
+                console.log('[Audio Worklet] AudioContext created, state:', audioContext.state);
 
                 // 使用包内的 AudioWorklet 模块（通过 Vite 插件提供）
-                await audioContext.audioWorklet.addModule('/audio-processor.js');
+                console.log('[Audio Worklet] Loading audio-processor.js module...');
+                try {
+                    await audioContext.audioWorklet.addModule('/audio-processor.js');
+                    console.log('[Audio Worklet] ✅ audio-processor.js loaded successfully');
+                } catch (moduleError) {
+                    console.error('[Audio Worklet] ❌ Failed to load audio-processor.js:', moduleError);
+                    throw new Error(`Failed to load AudioWorklet module: ${moduleError instanceof Error ? moduleError.message : moduleError}`);
+                }
 
                 // 创建worklet节点，带有增益和通道ID参数
+                console.log('[Audio Worklet] Creating AudioWorkletNode...');
                 workletNode = new AudioWorkletNode(audioContext, 'resampler-processor', {
                     processorOptions: {
                         gain: options.gain ?? 1.0,
                         channelId: options.channelId ?? 0,
                     },
                 });
+                console.log('[Audio Worklet] ✅ AudioWorkletNode created');
 
                 // 监听处理后的音频数据
+                let dataChunkCount = 0;
+                const inputSampleRate = options.sampleRate ?? 16000;
+                const outputSampleRate = options.targetSampleRate ?? inputSampleRate;
+                const needsResampling = inputSampleRate !== outputSampleRate;
+
+                if (needsResampling) {
+                    console.log(`[Audio Worklet] Resampling enabled: ${inputSampleRate}Hz -> ${outputSampleRate}Hz`);
+                }
+
                 workletNode.port.onmessage = event => {
                     if (event.data.type === 'audioData') {
+                        dataChunkCount++;
+                        if (dataChunkCount <= 3 || dataChunkCount % 100 === 0) {
+                            console.log(`[Audio Worklet] Received audio data chunk #${dataChunkCount}, length:`, event.data.data.length);
+                        }
                         try {
-                            controller.enqueue(event.data.data);
+                            let audioData = event.data.data;
+
+                            // 如果需要重采样，进行重采样处理
+                            if (needsResampling) {
+                                audioData = resampleAudioBuffer(audioData, inputSampleRate, outputSampleRate);
+                                if (dataChunkCount <= 3) {
+                                    console.log(`[Audio Worklet] Resampled chunk #${dataChunkCount}: ${event.data.data.length} -> ${audioData.length} samples`);
+                                }
+                            }
+
+                            controller.enqueue(audioData);
                         } catch (e) {
-                            console.error('Failed to enqueue audio data:', e);
+                            console.error('[Audio Worklet] Failed to enqueue audio data:', e);
                             // 流已关闭/取消，清理资源
                             cleanup();
                         }
@@ -240,11 +345,15 @@ export async function ingestAudioStream(
                 };
 
                 // 连接MediaStream到worklet
+                console.log('[Audio Worklet] Creating MediaStreamSource...');
                 const source = audioContext.createMediaStreamSource(mediaStream);
+                console.log('[Audio Worklet] Connecting source to worklet...');
                 source.connect(workletNode);
 
                 // 连接到destination以保持图形活跃
+                console.log('[Audio Worklet] Connecting to destination...');
                 workletNode.connect(audioContext.destination);
+                console.log('[Audio Worklet] ✅ Audio pipeline connected successfully');
             } catch (error) {
                 console.error('Failed to setup AudioWorklet:', error);
                 throw new Error(`AudioWorklet setup failed: ${error instanceof Error ? error.message : error}`);

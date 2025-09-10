@@ -1,19 +1,66 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useAtom } from 'jotai'
 import ReactMarkdown from 'react-markdown'
 import styles from './App.module.scss'
 import squadyLogo from './assets/squady.png'
-import { isUserSpeakingAtom } from './state'
+import { isUserSpeakingAtom, logsAtom, wsConnectedAtom } from './state'
 import { LiveAudioVisualizerComponent } from './component/audioVisualizer'
 import { RealTime } from './RealTime'
-import { WebSocketStatusMonitor } from './component/WebSocketStatusMonitor'
 import { StatusPoint } from './component/statusPoint'
 import type { AudioManager } from './sdk/audio/AudioManager'
 import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent, InputAudioSpeechStartedEvent, InputAudioSpeechStoppedEvent } from './sdk/protocol/ClientProtocol';
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
+import { Console, Decode, Hook } from 'console-feed'
+import type { VoiceChatCore } from './sdk'
+
+// 趋势图组件
+const TrendChart = React.memo(({ responseMetrics }: {
+  responseMetrics: {
+    audioResponseTimes: number[];
+    averageAudioLatency: number;
+    totalInteractions: number;
+    lastAudioLatency: number;
+    isTimingActive: boolean;
+  }
+}) => {
+  const trendData = useMemo(() => {
+    const times = responseMetrics.audioResponseTimes.slice(-10);
+    return {
+      times,
+      minTime: Math.min(...responseMetrics.audioResponseTimes),
+      maxTime: Math.max(...responseMetrics.audioResponseTimes)
+    };
+  }, [responseMetrics.audioResponseTimes]);
+
+  return (
+    <div className={styles.responseTrend}>
+      <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
+      <div className={styles.trendBars}>
+        {trendData.times.map((time: number, index: number) => (
+          <div
+            key={index}
+            className={styles.trendBar}
+            style={{
+              height: `${Math.min(time / 20, 50)}px`,
+              backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
+            }}
+            title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
+          />
+        ))}
+      </div>
+      <div className={styles.trendStats}>
+        <span>最快: {trendData.minTime.toFixed(1)}ms</span>
+        <span>最慢: {trendData.maxTime.toFixed(1)}ms</span>
+        <span>精度: 1ms</span>
+      </div>
+    </div>
+  );
+});
+
+TrendChart.displayName = 'TrendChart';
 
 // 定义下行事件常量（参考 ClientProtocol.ts 中的服务端事件）
 const downstreamEvents = [
@@ -48,20 +95,23 @@ const downstreamEvents = [
   'response.function_call_result.delta'
 ] as const;
 
-// eslint-disable-next-line react-refresh/only-export-components
-export const realTime = new RealTime()
 
 export const App = () => {
   const [isUserSpeaking, setIsUserSpeaking] = useAtom(isUserSpeakingAtom)
-  const hasConnected = useRef(false)
-  const [, setSpeechDetected] = useState(false);
-  const [, setSpeechSegmentCount] = useState(0);
-  const [vadThreshold,] = useState(0.5);
+  const [speechDetected, setSpeechDetected] = useState(false);
+  const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
+
+  const [vadThreshold, setVadThreshold] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
   // 展示下行文本（WS返回的文本）
   const [currentText, setCurrentText] = useState('');
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
 
+  const realTime = useRef<any>()
+
+  useEffect(() => {
+    realTime.current = new RealTime()
+  }, [])
 
   // 响应速度监控相关状态
   const [responseMetrics, setResponseMetrics] = useState<{
@@ -78,22 +128,65 @@ export const App = () => {
     isTimingActive: false
   });
 
+
+  // 性能监控开关状态
+  const [isPerformanceMonitorEnabled, setIsPerformanceMonitorEnabled] = useState(true);
+
   // 用于跟踪请求时间的 Ref
   const speechStartTimeRef = useRef<number | null>(null);
   const hasRecordedResponse = useRef<boolean>(false);
 
+  // 用于在useEffect中访问最新状态的ref
+  const isPerformanceMonitorEnabledRef = useRef(isPerformanceMonitorEnabled);
+  const isPlayingDownstreamAudioRef = useRef(isPlayingDownstreamAudio);
+
+  // 使用useLayoutEffect更新ref值，避免重渲染
+  useLayoutEffect(() => {
+    isPerformanceMonitorEnabledRef.current = isPerformanceMonitorEnabled;
+  }, [isPerformanceMonitorEnabled]);
+
+  useLayoutEffect(() => {
+    isPlayingDownstreamAudioRef.current = isPlayingDownstreamAudio;
+  }, [isPlayingDownstreamAudio]);
+
+  // 切换性能监控状态
+  const togglePerformanceMonitor = useCallback(() => {
+    setIsPerformanceMonitorEnabled(prev => {
+      const newState = !prev;
+
+      if (newState) {
+        console.log('[PERF MONITOR] 性能监控已启用');
+      } else {
+        console.log('[PERF MONITOR] 性能监控已禁用，清理数据...');
+
+        // 清理性能数据
+        setResponseMetrics({
+          audioResponseTimes: [],
+          averageAudioLatency: 0,
+          totalInteractions: 0,
+          lastAudioLatency: 0,
+          isTimingActive: false
+        });
+
+        // 清理计时器状态
+        speechStartTimeRef.current = null;
+        hasRecordedResponse.current = false;
+
+        // 清理高精度计时器缓存
+        const voiceChatCore = realTime.current?.getVoiceChatCore();
+        const connectionManager = voiceChatCore?.getConnectionManager();
+        if (connectionManager) {
+          console.log('[PERF MONITOR] 高精度计时器缓存已清理');
+        }
+      }
+
+      return newState;
+    });
+  }, []);
+
   // 获取RealTime实例中的AudioManager
   const audioManagerRef = useRef<AudioManager | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
-
-  // VAD音频片段存储
-  const speechSegmentsRef = useRef<Float32Array[]>([]);
-  const currentSpeechDataRef = useRef<Float32Array[]>([]);
-  const isCollectingRef = useRef<boolean>(false);
-
-  // 音频数据缓冲区
-  const audioDataBufferRef = useRef<Float32Array[]>([]);
-  const recordedAudioDataRef = useRef<any[]>([]);
 
   // 传输定时器
   const transmissionTimerRef = useRef<number | null>(null);
@@ -103,43 +196,34 @@ export const App = () => {
   const [isPerformanceMonitorVisible, setIsPerformanceMonitorVisible] = useState(true);
 
   // 切换性能监控显示
-  const togglePerformanceMonitor = () => {
-    setIsPerformanceMonitorVisible(!isPerformanceMonitorVisible);
-  };
-
-  const connect = async () => {
-    if (hasConnected.current) return
-    hasConnected.current = true
-    await realTime.connectToServer()
-  }
-
-  const record = () => {
-    // setIsUserSpeaking(!isUserSpeaking)
-    toggleVadProcessing()
-  }
+  const togglePerformanceVisibility = useCallback(() => {
+    setIsPerformanceMonitorVisible(prev => !prev);
+  }, []);
 
   // 控制下行音频播放
-  const toggleDownstreamAudioPlayback = () => {
-    const newState = !isPlayingDownstreamAudio;
-    setIsPlayingDownstreamAudio(newState);
+  const toggleDownstreamAudioPlayback = useCallback(() => {
+    setIsPlayingDownstreamAudio(prev => {
+      const newState = !prev;
 
-    // 初始化或清理AudioPlayer实例
-    if (newState) {
-      if (!audioPlayerRef.current) {
-        audioPlayerRef.current = new AudioPlayer();
+      // 初始化或清理AudioPlayer实例
+      if (newState) {
+        if (!audioPlayerRef.current) {
+          audioPlayerRef.current = new AudioPlayer();
+        }
+        // console.debug('[APP] Downstream audio playback enabled');
+      } else {
+        if (audioPlayerRef.current) {
+          audioPlayerRef.current.stopPlayback();
+          audioPlayerRef.current = null;
+        }
+        // console.debug('[APP] Downstream audio playback disabled');
       }
-      // console.debug('[APP] Downstream audio playback enabled');
-    } else {
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.stopPlayback();
-        audioPlayerRef.current = null;
-      }
-      // console.debug('[APP] Downstream audio playback disabled');
-    }
-  };
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const toggleVadProcessing = async () => {
+      return newState;
+    });
+  }, []);
+
+  const toggleVadProcessing = useCallback(async () => {
     // console.debug("toggleVadProcessing called, isUserSpeaking:", isUserSpeaking);
     if (!audioManagerRef.current) {
       // console.debug("No audioManagerRef, returning");
@@ -149,9 +233,9 @@ export const App = () => {
     if (!isUserSpeaking) {
       // console.debug("[APP] Starting VAD processing");
 
-      // 清空之前的语音片段
-      speechSegmentsRef.current = [];
+      // 批量重置状态，减少重渲染
       setSpeechSegmentCount(0);
+      setSpeechDetected(false);
       // console.debug("[APP] Cleared previous speech segments");
 
       try {
@@ -183,7 +267,7 @@ export const App = () => {
                 // console.debug('[APP UPLINK] Sending audio chunk to server, size:', chunk.length, 'bytes');
 
                 // 获取VoiceChatCore实例并发送编码后的音频数据
-                const voiceChatCore = realTime.getVoiceChatCore();
+                const voiceChatCore = realTime.current?.getVoiceChatCore();
                 if (voiceChatCore) {
                   const result = voiceChatCore.sendEncodedAudioData(chunk);
                   if (!result) {
@@ -215,33 +299,21 @@ export const App = () => {
           .then(manager => manager.configure({ enabled: false }));
 
         // console.debug("[APP] VAD audio processing stopped");
+        // 批量更新状态，减少重渲染次数
         setIsUserSpeaking(false);
         setSpeechDetected(false);
+        setSpeechSegmentCount(0);
 
       } catch {
         // suppressed
       }
     }
-  };
+  }, [isUserSpeaking, vadThreshold, setIsUserSpeaking]);
 
-  // 合并外部收集的音频数据
-  const combineCollectedAudio = (): Float32Array => {
-    if (currentSpeechDataRef.current.length === 0) {
-      return new Float32Array(0);
-    }
-
-    const totalLength = currentSpeechDataRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
-    const combined = new Float32Array(totalLength);
-    let offset = 0;
-
-    for (const chunk of currentSpeechDataRef.current) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    // console.debug(`[APP EXTERNAL] Combined ${currentSpeechDataRef.current.length} chunks into ${totalLength} samples`);
-    return combined;
-  }
+  const record = useCallback(() => {
+    // setIsUserSpeaking(!isUserSpeaking)
+    toggleVadProcessing()
+  }, [toggleVadProcessing]);
 
   // // 音频传输控制
   // const startAudioTransmission = () => {
@@ -272,103 +344,59 @@ export const App = () => {
   };
 
 
+
   useEffect(() => {
-    connect()
-    toggleDownstreamAudioPlayback()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    realTime.current?.connectToServer()
+    // 直接调用状态设置，避免依赖回调函数
+    setIsPlayingDownstreamAudio(true);
+    if (!audioPlayerRef.current) {
+      audioPlayerRef.current = new AudioPlayer();
+    }
   }, [])
 
   useEffect(() => {
+
     // 获取RealTime实例中的AudioManager
-    audioManagerRef.current = realTime.getAudioManager();
+    audioManagerRef.current = realTime.current?.getAudioManager();
 
     // 设置事件监听器
-    audioManagerRef.current.on('speech:start', () => {
+    audioManagerRef.current?.on('speech:start', () => {
       // console.log('speech:start');
       setSpeechDetected(true);
-      // 开始外部收集音频数据
-      isCollectingRef.current = true;
-      currentSpeechDataRef.current = [];
-      console.log('[APP EXTERNAL] Started collecting speech data externally');
     });
 
-    audioManagerRef.current.on('speech:end', (speechAudio: Float32Array) => {
+    audioManagerRef.current?.on('speech:end', (_speechAudio: Float32Array) => {
       // console.log('speech:end', speechAudio.length);
-
-      // 停止外部收集
-      isCollectingRef.current = false;
-
-      // 合并外部收集的数据
-      const externalCollectedAudio = combineCollectedAudio();
-      // console.debug('[APP EXTERNAL] External collection ended, collected audio length:', externalCollectedAudio.length);
-
-      // 优先使用外部收集的数据，如果为空则使用VAD库提供的数据
-      const finalAudio = externalCollectedAudio.length > 0 ? externalCollectedAudio : speechAudio;
-      // console.debug('[APP EXTERNAL] Final audio length:', finalAudio.length);
-
-      if (finalAudio.length > 0) {
-        // 将语音片段添加到存储中
-        speechSegmentsRef.current.push(finalAudio);
-        setSpeechSegmentCount(speechSegmentsRef.current.length); // 更新状态触发重新渲染
-        // console.debug('[APP VAD] Stored speech segment, total segments:', speechSegmentsRef.current.length);
-        // console.debug('[APP VAD] Speech segment duration (approx):', (finalAudio.length / 16000).toFixed(2), 'seconds');
-      } else {
-        // console.warn('[APP VAD] Received empty speech audio data from both sources');
-      }
-
+      setSpeechSegmentCount(prev => prev + 1); // 使用函数式更新避免闭包问题
       setSpeechDetected(false);
     });
 
-    // 监听原始音频数据，用于外部收集
-    audioManagerRef.current.on('audio:data', (audioData: Float32Array) => {
-      // 始终保存录制的音频数据用于回放
-      if (isUserSpeaking) {
-        recordedAudioDataRef.current.push({
-          data: audioData,
-          timestamp: Date.now()
-        });
-      }
-
-      // 只有当VAD检测到语音活动且WebSocket连接时，才添加到传输缓冲区
-      if (isCollectingRef.current) {
-        // 创建副本并添加到当前收集中
-        const audioCopy = new Float32Array(audioData);
-        currentSpeechDataRef.current.push(audioCopy);
-        // console.debug('[APP EXTERNAL] Collected audio chunk, total chunks:', currentSpeechDataRef.current.length);
-
-        // 同时添加到传输缓冲区
-        audioDataBufferRef.current.push(audioCopy);
-
-        // 控制缓冲区大小
-        const MAX_BUFFER_SIZE = 5;
-        while (audioDataBufferRef.current.length > MAX_BUFFER_SIZE) {
-          audioDataBufferRef.current.shift();
-        }
-      }
+    audioManagerRef.current?.on('audio:data', (_audioData: Float32Array) => {
+      // suppressed
     });
 
     // 监听错误事件
-    audioManagerRef.current.on('error', (_error: Error) => {
+    audioManagerRef.current?.on('error', (_error: Error) => {
       // suppressed
     });
 
     // 监听VAD配置变化
-    audioManagerRef.current.on('vad:enabled', (_enabled: boolean) => {
+    audioManagerRef.current?.on('vad:enabled', (_enabled: boolean) => {
       // suppressed
     });
 
-    audioManagerRef.current.on('vad:threshold', (_threshold: number) => {
+    audioManagerRef.current?.on('vad:threshold', (_threshold: number) => {
       // suppressed
     });
 
     // 监听VoiceChatCore的下行音频数据
-    const voiceChatCore = realTime.getVoiceChatCore();
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
     const handleAudioDataReceived = (payload: AudioChunkPayload) => {
       // payload 包含 type 和 data 字段
       // data 是 Base64 编码的音频数据
       // console.debug('[APP] Received downstream audio data:', payload.data.length, 'characters');
       // 播放下行音频数据
-      if (audioPlayerRef.current && isPlayingDownstreamAudio) {
+      if (audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
         // 需要将Base64字符串解码为Uint8Array
         const uint8Array = base64ToUint8Array(payload.data);
         audioPlayerRef.current.playAudioChunk(uint8Array);
@@ -392,8 +420,8 @@ export const App = () => {
         }) => {
           console.log(`[HIGH-PERF] 高精度延迟测量: ${metric.type} = ${metric.latency.toFixed(3)}ms`);
 
-          // 更新UI显示
-          if (metric.type === 'response.audio.delta') {
+          // 更新UI显示 - 只有在性能监控开启时才处理
+          if (metric.type === 'response.audio.delta' && isPerformanceMonitorEnabledRef.current) {
             console.log(`[DEBUG] 高精度计时器触发，准备更新计数`);
             setResponseMetrics(prev => {
               console.log(`[DEBUG] 当前对话轮次: ${prev.totalInteractions} -> ${prev.totalInteractions + 1}`);
@@ -422,7 +450,7 @@ export const App = () => {
 
       const flushPlay = (responseId: string, now: number = performance.now()) => {
         // 动态检查音频播放状态和播放器实例
-        if (!audioPlayerRef.current) return;
+        if (!audioPlayerRef.current || !isPlayingDownstreamAudioRef.current) return;
         const state = pcmBuffersRef.get(responseId);
         if (!state || state.chunks.length === 0) return;
         const list = state.chunks;
@@ -440,12 +468,16 @@ export const App = () => {
         pcmBuffersRef.set(responseId, state);
         audioPlayerRef.current.playAudioChunk(merged);
       };
-      downstreamEvents.forEach((eventName) => {
-        const handler = (payload: unknown) => {
-          // ========== 高精度响应延迟计时开始 ==========
-          // 当收到 input_audio_buffer.speech_stopped 事件时，启动高精度计时器
-          if (eventName === 'input_audio_buffer.speech_stopped') {
-            const voiceChatCore = realTime.getVoiceChatCore();
+      // 创建统一的事件处理器
+      const createEventHandler = (eventName: string) => (payload: unknown) => {
+        switch (eventName) {
+          case 'input_audio_buffer.speech_stopped': {
+            // ========== 高精度响应延迟计时开始 ==========
+            // 当收到 input_audio_buffer.speech_stopped 事件时，启动高精度计时器
+            // 只有在性能监控开启时才进行计时
+            if (!isPerformanceMonitorEnabledRef.current) return;
+
+            const voiceChatCore = realTime.current?.getVoiceChatCore();
             const connectionManager = voiceChatCore?.getConnectionManager();
 
             if (connectionManager) {
@@ -463,44 +495,39 @@ export const App = () => {
               ...prev,
               isTimingActive: true
             }));
-            return;
+            break;
           }
 
-          // 通用事件监听，用于调试
-          if (eventName.includes('text') || eventName.includes('response.created')) {
-            console.log('[DEBUG] Event received:', eventName, payload);
-          }
-          // 文本增量与完成（展示在前端）
-          if (eventName === 'response.created') {
+          case 'response.created': {
             console.log('[TEXT] Response created, clearing current text');
             setCurrentText('');
-            return;
-          }
-          if (eventName === 'response.text.delta') {
-            const evt = payload as ResponseTextDeltaEvent;
-            if (!evt || typeof evt.delta !== 'string') return;
-            console.log('[TEXT] Text delta received:', evt.delta);
-            setCurrentText(prev => prev + evt.delta);
-            return;
+            break;
           }
 
-          if (eventName === 'response.text.done') {
-            const evt = payload as ResponseTextDoneEvent;
-            if (!evt || typeof evt.text !== 'string') return;
-            console.log('[TEXT] Text done received:', evt.text);
-            setFinalTexts(prev => [evt.text, ...prev].slice(0, 20));
+          case 'response.text.delta': {
+            const textDeltaEvt = payload as ResponseTextDeltaEvent;
+            if (!textDeltaEvt || typeof textDeltaEvt.delta !== 'string') return;
+            console.log('[TEXT] Text delta received:', textDeltaEvt.delta);
+            setCurrentText(prev => prev + textDeltaEvt.delta);
+            break;
+          }
+
+          case 'response.text.done': {
+            const textDoneEvt = payload as ResponseTextDoneEvent;
+            if (!textDoneEvt || typeof textDoneEvt.text !== 'string') return;
+            console.log('[TEXT] Text done received:', textDoneEvt.text);
+            setFinalTexts(prev => [textDoneEvt.text, ...prev].slice(0, 20));
             setCurrentText('');
-            return;
+            break;
           }
 
-          // 专门处理音频增量：解码并播放
-          if (eventName === 'response.audio.delta') {
-            const evt = payload as ResponseAudioDeltaEvent;
-            if (!evt || typeof evt.delta !== 'string') return;
+          case 'response.audio.delta': {
+            const audioDeltaEvt = payload as ResponseAudioDeltaEvent;
+            if (!audioDeltaEvt || typeof audioDeltaEvt.delta !== 'string') return;
 
             // ========== 兼容性响应延迟计算 ==========
-            // 备用计时方式（以防高精度计时器失效）
-            if (speechStartTimeRef.current && !hasRecordedResponse.current) {
+            // 备用计时方式（以防高精度计时器失效）- 只有在性能监控开启时才执行
+            if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
               const audioLatency = performance.now() - speechStartTimeRef.current;
               hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
 
@@ -516,14 +543,14 @@ export const App = () => {
             }
 
             try {
-              const opusBytes = base64ToUint8Array(evt.delta);
+              const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
               let pcmBytes = audioProcessor.decodeOpus(opusBytes);
               // 解码失败或返回空时，回退直接按PCM播放
               if (!pcmBytes || pcmBytes.length === 0) {
                 pcmBytes = opusBytes;
               }
               if (pcmBytes && pcmBytes.length > 0) {
-                const rid = evt.response_id;
+                const rid = audioDeltaEvt.response_id;
                 const now = performance.now();
                 const state = pcmBuffersRef.get(rid) || { chunks: [], lastFlushAt: now } as BufferState;
                 state.chunks.push(pcmBytes);
@@ -539,31 +566,42 @@ export const App = () => {
             } catch (e) {
               console.error('[APP] Failed to decode/play response.audio.delta:', e);
             }
-            return;
+            break;
           }
 
-          // 开始缓冲
-          if (eventName === 'output_audio_buffer.started') {
-            const evt = payload as OutputAudioBufferStartedEvent;
-            if (evt && typeof evt.response_id === 'string') {
-              pcmBuffersRef.set(evt.response_id, { chunks: [], lastFlushAt: performance.now() });
+          case 'output_audio_buffer.started': {
+            const bufferStartedEvt = payload as OutputAudioBufferStartedEvent;
+            if (bufferStartedEvt && typeof bufferStartedEvt.response_id === 'string') {
+              pcmBuffersRef.set(bufferStartedEvt.response_id, { chunks: [], lastFlushAt: performance.now() });
             }
-            return;
+            break;
           }
 
-          // 结束缓冲并播放剩余
-          if (eventName === 'response.audio.done' || eventName === 'output_audio_buffer.stopped') {
+          case 'response.audio.done':
+          case 'output_audio_buffer.stopped': {
             const respId = (payload as Partial<ResponseAudioDoneEvent> & { response_id?: string }).response_id;
             if (respId) {
               flushPlay(respId);
               pcmBuffersRef.delete(respId);
             }
-            return;
+            break;
           }
 
-          // 其他事件默认记录（保持可观察性）
-          // console.log('[DOWNSTREAM]', eventName, payload);
-        };
+          default: {
+            // 通用事件监听，用于调试
+            if (eventName.includes('text') || eventName.includes('response.created')) {
+              console.log('[DEBUG] Event received:', eventName, payload);
+            }
+            // 其他事件默认记录（保持可观察性）
+            // console.log('[DOWNSTREAM]', eventName, payload);
+            break;
+          }
+        }
+      };
+
+      // 注册所有事件处理器
+      downstreamEvents.forEach((eventName) => {
+        const handler = createEventHandler(eventName);
         handlers.set(eventName, handler);
         voiceChatCore.on(eventName, handler);
       });
@@ -572,7 +610,7 @@ export const App = () => {
       // 清理
       return () => {
         console.log(`[DEBUG] 清理事件监听器`);
-        audioManagerRef.current?.removeAllListeners();
+        audioManagerRef.current?.removeAllListeners?.();
         stopAudioTransmission();
         voiceChatCore.off('audio_chunk', handleAudioDataReceived);
         handlers.forEach((h, name) => voiceChatCore.off(name, h));
@@ -584,6 +622,7 @@ export const App = () => {
         }
       };
     }
+    // 提供全局函数来添加日志
 
     return undefined;
   }, []); // 只在组件挂载时执行一次
@@ -605,41 +644,107 @@ export const App = () => {
     }
   }, [isPlayingDownstreamAudio]);
 
-  // 获取延迟颜色类名的函数
-  const getLatencyColor = (latency: number): string => {
-    if (latency === 0) return '';
-    if (latency < 1000) return styles.excellent;
-    if (latency < 2000) return styles.good;
-    return styles.poor;
-  };
+  // 获取延迟颜色类名的函数 - 使用 useMemo 优化
+  const getLatencyColor = useMemo(() =>
+    (latency: number): string => {
+      if (latency === 0) return '';
+      if (latency < 1000) return styles.excellent;
+      if (latency < 2000) return styles.good;
+      return styles.poor;
+    }, []);
+
+  const [, setIsWsConnected] = useAtom(wsConnectedAtom);
+
+  useEffect(() => {
+    const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
+
+    // 监听WebSocket原生事件
+    const handleOpen = () => {
+      // 连接成功时，connectionStatusChange事件应该已经更新了状态
+      setIsWsConnected(true);
+    };
+
+    const handleClose = () => {
+      setIsWsConnected(false);
+      // setConnectionStatus({
+      //     state: 'disconnected',
+      //     message: 'WebSocket连接已断开'
+      // });
+    };
+
+    const handleError = () => {
+      // setConnectionStatus({
+      //     state: 'error',
+      //     message: 'WebSocket连接发生错误',
+      //     error: error.message || '未知错误'
+      // });
+    };
+
+    // 监听会话创建事件
+    const handleSessionCreated = () => {
+      // setSessionStatus({
+      //     created: true,
+      //     sessionId: data.session?.id || null
+      // });
+    };
+
+    // 注册事件监听器
+    // voiceChatCore.on('connectionStatusChange', handleConnectionStatusChange);
+    voiceChatCore.on('open', handleOpen);
+    voiceChatCore.on('close', handleClose);
+    voiceChatCore.on('error', handleError);
+    voiceChatCore.on('session.created', handleSessionCreated);
+
+    // 清理函数
+    return () => {
+      // voiceChatCore.off('connectionStatusChange', handleConnectionStatusChange);
+      voiceChatCore.off('open', handleOpen);
+      voiceChatCore.off('close', handleClose);
+      voiceChatCore.off('error', handleError);
+      voiceChatCore.off('session.created', handleSessionCreated);
+    };
+  }, [realTime, setIsWsConnected]);
 
   return (
     <div className={styles.container}>
       <div className={styles.mainSection}>
-        {isUserSpeaking && (
-          <div className={styles.audioVisualizerOverlay}>
-            <LiveAudioVisualizerComponent
-              width={window.innerWidth > 768 ? 700 : window.innerWidth > 480 ? 350 : 280}
-              height={window.innerWidth > 768 ? 200 : window.innerWidth > 480 ? 150 : 120}
-              barColor="#ffffff"
-              smoothingTimeConstant={0.8}
-              fftSize={512}
-              barWidth={window.innerWidth > 480 ? 3 : 2}
-              gap={window.innerWidth > 480 ? 2 : 1}
-              isRecording={isUserSpeaking}
-            />
+        <div className={styles.squadyUIContainer}>
+          <div
+            className={styles.squadyUI}
+            onClick={record}
+          >
+            <img src={squadyLogo} alt="squady" />
           </div>
-        )}
-        <SquadyUI onToggleRecording={record} />
+          <div className={styles.squadyUIText}>
+            <div>Squady</div>
+            <StatusPoint />
+          </div>
+          <div className={styles.squadySubtext}>点击开始对话</div>
+        </div>
       </div>
 
       {/* 实时响应速度监控显示 */}
       <div className={`${styles.performanceMonitor} ${isPerformanceMonitorVisible ? styles.visible : styles.hidden}`}>
-        <div className={styles.performanceHeader} onClick={togglePerformanceMonitor}>
+        <div className={styles.performanceHeader}>
           <h4>实时响应监控</h4>
-          <button className={styles.toggleButton} type="button">
-            {isPerformanceMonitorVisible ? '−' : '📊'}
-          </button>
+          <div className={styles.headerButtons}>
+            <button
+              className={`${styles.toggleButton} ${isPerformanceMonitorEnabled ? styles.enabled : styles.disabled}`}
+              onClick={togglePerformanceMonitor}
+              title={isPerformanceMonitorEnabled ? "关闭性能监控" : "开启性能监控"}
+              type="button"
+            >
+              {isPerformanceMonitorEnabled ? "⏸" : "▶"}
+            </button>
+            <button
+              className={styles.toggleButton}
+              onClick={togglePerformanceVisibility}
+              title="展开/收起"
+              type="button"
+            >
+              {isPerformanceMonitorVisible ? '−' : '+'}
+            </button>
+          </div>
         </div>
 
         {isPerformanceMonitorVisible && (
@@ -662,7 +767,6 @@ export const App = () => {
                     : '--'}
                 </span>
               </div>
-
               <div className={styles.metric}>
                 <span className={styles.metricLabel}>对话轮次</span>
                 <span className={styles.metricValue}>
@@ -680,27 +784,7 @@ export const App = () => {
 
             {/* 响应时间趋势图 */}
             {responseMetrics.audioResponseTimes.length > 1 && (
-              <div className={styles.responseTrend}>
-                <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
-                <div className={styles.trendBars}>
-                  {responseMetrics.audioResponseTimes.slice(-10).map((time, index) => (
-                    <div
-                      key={index}
-                      className={styles.trendBar}
-                      style={{
-                        height: `${Math.min(time / 20, 50)}px`,
-                        backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
-                      }}
-                      title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
-                    />
-                  ))}
-                </div>
-                <div className={styles.trendStats}>
-                  <span>最快: {Math.min(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
-                  <span>最慢: {Math.max(...responseMetrics.audioResponseTimes).toFixed(1)}ms</span>
-                  <span>精度: 1ms</span>
-                </div>
-              </div>
+              <TrendChart responseMetrics={responseMetrics} />
             )}
           </div>
         )}
@@ -713,30 +797,37 @@ export const App = () => {
           {currentText || finalTexts[0] || ''}
         </ReactMarkdown>
       </div>
+      <ConsoleDom />
     </div>
   )
 }
 
-interface SquadyUIProps {
-  onToggleRecording: () => void;
-}
+const ConsoleDom = React.memo(function ConsoleDom() {
+  // 优化内联样式，避免每次渲染重新创建对象
+  const consoleStyles = useMemo(() => ({
+    backgroundColor: 'black',
+    height: '300px',
+    minWidth: '200px',
+    overflow: 'auto' as const,
+    border: '1px solid #333',
+    marginBottom: '10px',
+  }), []);
 
-const SquadyUI: React.FC<SquadyUIProps> = ({ onToggleRecording }) => {
-  const text = 'Squady'
+  const [logs, setLogs] = useAtom(logsAtom)
+  useEffect(() => {
+    setTimeout(() => {
+
+      Hook(window.console, (log) => {
+        setLogs((prev) => [...prev, Decode(log)])
+      })
+    }, 100)
+  }, [])
   return (
-    <div className={styles.squadyUIContainer}>
-      <WebSocketStatusMonitor realTime={realTime} />
-      <div
-        className={styles.squadyUI}
-        onClick={onToggleRecording}
-      >
-        <img src={squadyLogo} alt="squady" />
-      </div>
-      <div className={styles.squadyUIText}>
-        <div>{text}</div>
-        <StatusPoint />
-      </div>
-      <div className={styles.squadySubtext}>点击开始对话</div>
+    <div style={consoleStyles}>
+      <Console logs={logs} styles={{
+        BASE_FONT_SIZE: '12px'
+
+      }} variant='dark' />
     </div>
   )
-}
+})

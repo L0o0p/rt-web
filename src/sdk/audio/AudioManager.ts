@@ -240,7 +240,7 @@ export class AudioManager extends EventEmitter {
 
         // 音频上传处理
         if (this.moduleConfig.uplink && this.chunker) {
-            console.log('[AudioManager] Sending audio data to uplink chunker, data size:', audioData.length, 'bytes');
+            // console.log('[AudioManager] Sending audio data to uplink chunker, data size:', audioData.length, 'bytes');
             this.chunker.addAudioData(audioData);
         }
     }

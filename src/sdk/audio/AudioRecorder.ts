@@ -4,6 +4,60 @@ import {
     type WebRTCAudioOptions
 } from './customIngestAudioStream';
 
+// VAD模型预加载状态管理
+class VADModelManager {
+    private static instance: VADModelManager;
+    private isPreloading: boolean = false;
+    private isPreloaded: boolean = false;
+    private preloadPromise: Promise<void> | null = null;
+
+    private constructor() {
+        // 私有构造函数，确保单例模式
+    }
+
+    static getInstance(): VADModelManager {
+        if (!VADModelManager.instance) {
+            VADModelManager.instance = new VADModelManager();
+        }
+        return VADModelManager.instance;
+    }
+
+    async preloadModel(): Promise<void> {
+        // 如果已经预加载完成，直接返回
+        if (this.isPreloaded) {
+            console.log("[VAD MODEL] VAD model already preloaded, skipping");
+            return;
+        }
+
+        // 如果正在预加载中，返回现有的Promise
+        if (this.isPreloading && this.preloadPromise) {
+            console.log("[VAD MODEL] VAD model is already preloading, waiting for completion");
+            return this.preloadPromise;
+        }
+
+        // 开始预加载
+        this.isPreloading = true;
+        console.log("[VAD MODEL] Preloading VAD model...");
+
+        this.preloadPromise = preloadModel().then(() => {
+            console.log("[VAD MODEL] VAD model preloaded successfully");
+            this.isPreloaded = true;
+            this.isPreloading = false;
+        }).catch(error => {
+            console.error('[VAD MODEL] Failed to preload VAD model:', error);
+            this.isPreloading = false;
+            this.preloadPromise = null;
+            throw error;
+        });
+
+        return this.preloadPromise;
+    }
+
+    isModelReady(): boolean {
+        return this.isPreloaded;
+    }
+}
+
 export class AudioRecorder {
     private mediaStream: MediaStream | null = null;
     private audioStream: ReadableStream<Float32Array> | null = null;
@@ -28,11 +82,9 @@ export class AudioRecorder {
     };
 
     constructor() {
-        // 预加载VAD模型（在后台进行）
-        console.log("[VAD MODEL] Preloading VAD model...");
-        preloadModel().then(() => {
-            console.log("[VAD MODEL] VAD model preloaded successfully");
-        }).catch(error => {
+        // 使用单例管理器预加载VAD模型（避免重复加载）
+        const vadManager = VADModelManager.getInstance();
+        vadManager.preloadModel().catch(error => {
             console.error('[VAD MODEL] Failed to preload VAD model:', error);
         });
     }
@@ -236,23 +288,23 @@ export class AudioRecorder {
         deviceId: string | undefined,
         audioDataHandler: (audioData: Uint8Array) => void
     ): Promise<void> {
-        console.log("startVADProcessing called, vadEnabled:", this.vadEnabled);
+        // console.log("startVADProcessing called, vadEnabled:", this.vadEnabled);
         if (!this.vadEnabled) {
             console.warn("VAD is not enabled");
             return;
         }
 
-        console.log("[VAD SETUP] Getting audio stream for device:", deviceId || "default");
+        // console.log("[VAD SETUP] Getting audio stream for device:", deviceId || "default");
         // 获取音频流
         const audioStream = await this.getAudioStream(deviceId);
-        console.log("[VAD SETUP] Got audio stream. Stream details:", {
-            readable: audioStream instanceof ReadableStream,
-            locked: audioStream.locked
-        });
+        // console.log("[VAD SETUP] Got audio stream. Stream details:", {
+        //     readable: audioStream instanceof ReadableStream,
+        //     locked: audioStream.locked
+        // });
 
         // 创建单一的VAD转换流
-        console.log("[VAD SETUP] Creating VAD transform with threshold:", this.vadThreshold);
-        console.log("[VAD SETUP] Explicitly setting noEmit to false for speech collection");
+        // console.log("[VAD SETUP] Creating VAD transform with threshold:", this.vadThreshold);
+        // console.log("[VAD SETUP] Explicitly setting noEmit to false for speech collection");
         this.vadTransform = this.createVADTransform({
             onSpeechStart: this.onSpeechStartCallback || undefined,
             onSpeechEnd: this.onSpeechEndCallback || undefined,
@@ -268,11 +320,11 @@ export class AudioRecorder {
         console.log("Created VAD transforms, creating speech processor");
 
         // 创建处理函数
-        let audioChunkCount = 0;
+        // let audioChunkCount = 0;
         this.speechProcessor = new WritableStream({
             write: (audioData: Float32Array) => {
-                audioChunkCount++;
-                console.log("[VAD DEBUG] VAD speech processor write called with audio data length:", audioData.length);
+                // audioChunkCount++;
+                // console.log("[VAD DEBUG] VAD speech processor write called with audio data length:", audioData.length);
 
                 // 通知外部有音频数据（用于外部收集）
                 if (this.onAudioDataCallback) {
@@ -282,9 +334,9 @@ export class AudioRecorder {
                 }
 
                 // 每处理10个音频块就输出一次心跳日志
-                if (audioChunkCount % 10 === 0) {
-                    console.log("[VAD HEARTBEAT] Processed", audioChunkCount, "audio chunks so far");
-                }
+                // if (audioChunkCount % 10 === 0) {
+                //     console.log("[VAD HEARTBEAT] Processed", audioChunkCount, "audio chunks so far");
+                // }
 
                 // 转换为Int16Array
                 const int16Data = new Int16Array(audioData.length);
@@ -302,35 +354,35 @@ export class AudioRecorder {
                     uint8Data[i * 2 + 1] = (int16Value >> 8) & 0xFF; // 高字节
                 }
 
-                console.log("[AudioRecorder] Converting audio data - Input length:", audioData.length, "samples, Output length:", uint8Data.length, "bytes");
+                // console.log("[AudioRecorder] Converting audio data - Input length:", audioData.length, "samples, Output length:", uint8Data.length, "bytes");
 
                 // 验证输出数据是否符合预期
-                if (uint8Data.length !== audioData.length * 2) {
-                    console.warn("[AudioRecorder] Warning: Output data size mismatch - expected:", audioData.length * 2, "actual:", uint8Data.length);
-                }
+                // if (uint8Data.length !== audioData.length * 2) {
+                //     console.warn("[AudioRecorder] Warning: Output data size mismatch - expected:", audioData.length * 2, "actual:", uint8Data.length);
+                // }
 
-                // 检查数据是否为空
-                if (uint8Data.length === 0) {
-                    console.warn("[AudioRecorder] Warning: Empty audio data generated");
-                }
+                // // 检查数据是否为空
+                // if (uint8Data.length === 0) {
+                //     console.warn("[AudioRecorder] Warning: Empty audio data generated");
+                // }
 
                 // 调用音频数据处理回调
                 audioDataHandler(uint8Data);
             }
         });
 
-        console.log("[VAD PIPELINE] Piping audio stream through VAD transform to speech processor");
-        console.log("[VAD PIPELINE] Audio stream details:", {
-            readable: audioStream instanceof ReadableStream,
-            locked: audioStream.locked
-        });
-        console.log("[VAD PIPELINE] VAD transform details:", {
-            readable: this.vadTransform?.readable instanceof ReadableStream,
-            writable: this.vadTransform?.writable instanceof WritableStream
-        });
-        console.log("[VAD PIPELINE] Speech processor details:", {
-            writable: this.speechProcessor instanceof WritableStream
-        });
+        // console.log("[VAD PIPELINE] Piping audio stream through VAD transform to speech processor");
+        // console.log("[VAD PIPELINE] Audio stream details:", {
+        //     readable: audioStream instanceof ReadableStream,
+        //     locked: audioStream.locked
+        // });
+        // console.log("[VAD PIPELINE] VAD transform details:", {
+        //     readable: this.vadTransform?.readable instanceof ReadableStream,
+        //     writable: this.vadTransform?.writable instanceof WritableStream
+        // });
+        // console.log("[VAD PIPELINE] Speech processor details:", {
+        //     writable: this.speechProcessor instanceof WritableStream
+        // });
 
         // 直接将音频流通过VAD转换流管道传输到处理函数
         audioStream

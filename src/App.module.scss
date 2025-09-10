@@ -510,6 +510,12 @@ body {
     }
 }
 
+.headerButtons {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
 .toggleButton {
     background: none;
     border: none;
@@ -528,6 +534,16 @@ body {
     justify-content: center;
     border-radius: 4px;
     position: relative;
+
+    &.enabled {
+        color: #4CAF50;
+        background-color: rgba(76, 175, 80, 0.1);
+    }
+
+    &.disabled {
+        color: #888;
+        opacity: 0.6;
+    }
 
     &:hover {
         background-color: rgba(76, 175, 80, 0.1);

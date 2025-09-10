@@ -18,9 +18,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-      
     - name: Log in to Harbor Registry
       uses: docker/login-action@v3
       with:
@@ -37,7 +34,6 @@ jobs:
         push: true
         tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         cache-from: type=gha
-        cache-to: type=gha,mode=max
 
     - name: Trigger Portainer Webhook
       if: success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')

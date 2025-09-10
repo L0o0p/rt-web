@@ -35,6 +35,14 @@ export default defineConfig({
     fs: {
       // 允许访问上级目录，确保 AudioWorklet 模块可以被正确加载
       allow: ['..']
+    },
+    // 修复WebSocket连接问题
+    hmr: {
+      port: 5173,
+      host: 'localhost',
+      protocol: 'wss',
+      // 添加客户端配置
+      clientPort: 5173
     }
   },
   build: {

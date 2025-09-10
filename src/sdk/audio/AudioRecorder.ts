@@ -191,9 +191,10 @@ export class AudioRecorder {
         console.log("[AUDIO STREAM] WebRTC options:", this.webrtcOptions);
 
         // 使用 WebRTC 回声消除功能创建音频流
+        // 不指定采样率，让系统自动检测设备支持的最佳采样率
         const result = await createWebRTCAudioStream(deviceId, {
             ...this.webrtcOptions,
-            sampleRate: 16000,  // 确保使用16kHz采样率
+            // sampleRate 将自动检测，优先使用16kHz，如果不支持则使用最接近的
         });
 
         this.mediaStream = result.mediaStream;

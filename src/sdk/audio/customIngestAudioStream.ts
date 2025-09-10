@@ -1,5 +1,17 @@
+/**
+ * 首选的音频采样率，按优先级排序
+ * 16kHz 是首选，但如果设备不支持，会尝试其他接近的采样率
+ */
+export const PREFERRED_SAMPLE_RATES = Object.freeze([
+    16000,  // 首选：16kHz
+    48000,  // 备选：48kHz (常见的高质量采样率)
+    44100,  // 备选：44.1kHz (CD质量)
+    22050,  // 备选：22.05kHz
+    8000,   // 备选：8kHz (最低质量但广泛支持)
+]);
+
 export const RECOMMENDED_AUDIO_CONSTRAINTS = Object.freeze({
-    sampleRate: 16000,
+    sampleRate: { ideal: 16000, min: 8000, max: 48000 },  // 灵活的采样率约束
     channelCount: 1,
     // WebRTC 内置音频处理功能 - 回声消除、噪声抑制、自动增益控制
     echoCancellation: true,        // 启用回声消除
@@ -11,7 +23,7 @@ export const RECOMMENDED_AUDIO_CONSTRAINTS = Object.freeze({
  * 高级音频约束配置，提供更精细的控制
  */
 export const ADVANCED_AUDIO_CONSTRAINTS = Object.freeze({
-    sampleRate: 16000,
+    sampleRate: { ideal: 16000, min: 8000, max: 48000 },  // 灵活的采样率约束
     channelCount: 1,
     echoCancellation: { exact: true },    // 强制启用回声消除
     noiseSuppression: { exact: true },    // 强制启用噪声抑制
@@ -20,6 +32,63 @@ export const ADVANCED_AUDIO_CONSTRAINTS = Object.freeze({
     // echoCancellationType: 'system',    // 'browser' | 'system' - 回声消除类型
     // latency: 0.01,                     // 低延迟设置（10ms）
 });
+
+/**
+ * 检测设备支持的最佳采样率
+ * @param deviceId 音频设备ID
+ * @returns 设备支持的最接近16kHz的采样率
+ */
+export async function detectBestSampleRate(deviceId?: string): Promise<number> {
+    console.log('[Audio Detection] Detecting best sample rate for device...');
+
+    // 尝试每个首选采样率，找到第一个支持的
+    for (const sampleRate of PREFERRED_SAMPLE_RATES) {
+        try {
+            const constraints = {
+                audio: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    sampleRate: { exact: sampleRate },
+                    channelCount: 1
+                }
+            };
+
+            const testStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const audioTrack = testStream.getAudioTracks()[0];
+            const settings = audioTrack.getSettings();
+
+            // 清理测试流
+            testStream.getTracks().forEach(track => track.stop());
+
+            if (settings.sampleRate === sampleRate) {
+                console.log(`✅ [Audio Detection] Device supports ${sampleRate}Hz`);
+                return sampleRate;
+            }
+        } catch (error) {
+            console.log(`❌ [Audio Detection] Device does not support ${sampleRate}Hz:`, error instanceof Error ? error.message : error);
+        }
+    }
+
+    // 如果所有首选采样率都不支持，使用浏览器的默认值
+    console.warn('⚠️ [Audio Detection] No preferred sample rates supported, using browser default');
+    try {
+        const defaultStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                channelCount: 1
+            }
+        });
+        const audioTrack = defaultStream.getAudioTracks()[0];
+        const settings = audioTrack.getSettings();
+        defaultStream.getTracks().forEach(track => track.stop());
+
+        const detectedRate = settings.sampleRate || 44100; // fallback to 44.1kHz
+        console.log(`📍 [Audio Detection] Using device default sample rate: ${detectedRate}Hz`);
+        return detectedRate;
+    } catch (error) {
+        console.error('❌ [Audio Detection] Failed to detect any sample rate, falling back to 44100Hz');
+        return 44100; // Last resort fallback
+    }
+}
 
 /**
  * 自定义的 ingestAudioStream 实现，解决 Vite 中 AudioWorklet 模块加载问题
@@ -49,10 +118,21 @@ export async function createWebRTCAudioStream(
     deviceId?: string,
     options: WebRTCAudioOptions = {}
 ): Promise<{ mediaStream: MediaStream; audioStream: ReadableStream<Float32Array> }> {
-    // 构建音频约束
+    // 如果未指定采样率，先检测设备支持的最佳采样率
+    let targetSampleRate = options.sampleRate;
+    if (!targetSampleRate) {
+        console.log('[WebRTC Audio] No sample rate specified, detecting best supported sample rate...');
+        targetSampleRate = await detectBestSampleRate(deviceId);
+        console.log(`[WebRTC Audio] Will use detected sample rate: ${targetSampleRate}Hz`);
+    }
+
+    // 构建音频约束，使用检测到的采样率
+    const baseConstraints = options.enableAdvancedProcessing ? ADVANCED_AUDIO_CONSTRAINTS : RECOMMENDED_AUDIO_CONSTRAINTS;
     const audioConstraints = {
         deviceId: deviceId ? { exact: deviceId } : undefined,
-        ...(options.enableAdvancedProcessing ? ADVANCED_AUDIO_CONSTRAINTS : RECOMMENDED_AUDIO_CONSTRAINTS),
+        ...baseConstraints,
+        // 覆盖采样率为检测到的最佳值
+        sampleRate: targetSampleRate,
         // 允许通过选项覆盖默认设置
         ...(options.echoCancellation !== undefined && { echoCancellation: options.echoCancellation }),
         ...(options.noiseSuppression !== undefined && { noiseSuppression: options.noiseSuppression }),
@@ -78,6 +158,13 @@ export async function createWebRTCAudioStream(
             channelCount: settings.channelCount
         });
 
+        // 检查采样率是否符合预期
+        if (settings.sampleRate !== targetSampleRate) {
+            console.warn(`⚠️ [WebRTC Audio] Expected sample rate ${targetSampleRate}Hz, but got ${settings.sampleRate}Hz`);
+        } else {
+            console.log(`✅ [WebRTC Audio] Sample rate ${settings.sampleRate}Hz successfully applied`);
+        }
+
         // 检查是否成功启用了回声消除
         if (settings.echoCancellation) {
             console.log('✅ [WebRTC Audio] Echo cancellation is ENABLED');
@@ -86,8 +173,12 @@ export async function createWebRTCAudioStream(
         }
     }
 
-    // 创建音频流
-    const audioStream = await ingestAudioStream(mediaStream, options);
+    // 创建音频流，传递实际使用的采样率
+    const actualSampleRate = audioTrack?.getSettings().sampleRate || targetSampleRate;
+    const audioStream = await ingestAudioStream(mediaStream, {
+        ...options,
+        sampleRate: actualSampleRate
+    });
 
     return { mediaStream, audioStream };
 }

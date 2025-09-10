@@ -23,7 +23,7 @@ COPY . .
 RUN yarn build
 
 # 生产阶段 - 使用 nginx 服务静态文件
-FROM harbor.luxhub.top:2097/docker/nginx:alpine
+FROM nginx:alpine
 
 # 复制构建产物
 COPY --from=builder /usr/src/app/dist /usr/share/nginx/html

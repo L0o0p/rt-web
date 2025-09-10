@@ -663,6 +663,7 @@ export const App = () => {
     <div className={styles.container}>
       <div className={styles.mainSection}>
         <div className={styles.squadyUIContainer}>
+          <LiveAudioVisualizerComponent pause={!isUserSpeaking} />
           <div
             className={styles.squadyUI}
             onClick={record}

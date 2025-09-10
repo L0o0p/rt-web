@@ -1,25 +1,9 @@
 .audioVisualizerOverlay {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 0;
-    pointer-events: none;
-    animation: fadeIn 0.3s ease-in-out;
+    height: 0;
+    z-index: -1;
 
-    // 移动端适配
-    @media (max-width: 768px) {
-        width: 90%;
-        max-width: 500px;
-    }
-
-    @media (max-width: 480px) {
-        width: 95%;
-        max-width: 350px;
-    }
-
-    @media (max-width: 360px) {
-        width: 100%;
-        max-width: 280px;
+    canvas {
+        transform: translateY(50%);
+        max-width: 80vw;
     }
 }

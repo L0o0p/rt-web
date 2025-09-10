@@ -314,14 +314,30 @@ export async function ingestAudioStream(
                 const outputSampleRate = options.targetSampleRate ?? inputSampleRate;
                 const needsResampling = inputSampleRate !== outputSampleRate;
 
+                // 检测移动设备
+                const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+                // 音频缓冲区 - 累积音频数据再发送
+                let audioBuffer = new Float32Array(0);
+                // 固定使用1024样本的缓冲区
+                // 16kHz下，1024样本 = 64ms
+                const targetBufferSize = 1024;
+
                 if (needsResampling) {
                     console.log(`[Audio Worklet] Resampling enabled: ${inputSampleRate}Hz -> ${outputSampleRate}Hz`);
+                }
+
+                console.log(`[Audio Worklet] Using buffer size: ${targetBufferSize} samples (${(targetBufferSize / outputSampleRate * 1000).toFixed(1)}ms)`);
+                if (isMobile) {
+                    console.log(`[Audio Worklet] Mobile device detected - using optimized settings`);
                 }
 
                 workletNode.port.onmessage = event => {
                     if (event.data.type === 'audioData') {
                         dataChunkCount++;
-                        if (dataChunkCount <= 3 || dataChunkCount % 100 === 0) {
+                        // 移动设备减少日志输出频率
+                        const logInterval = isMobile ? 500 : 200;
+                        if (dataChunkCount <= 3 || dataChunkCount % logInterval === 0) {
                             console.log(`[Audio Worklet] Received audio data chunk #${dataChunkCount}, length:`, event.data.data.length);
                         }
                         try {
@@ -335,7 +351,28 @@ export async function ingestAudioStream(
                                 }
                             }
 
-                            controller.enqueue(audioData);
+                            // 将新数据追加到缓冲区 - 优化内存分配
+                            if (audioBuffer.length === 0) {
+                                audioBuffer = audioData;
+                            } else {
+                                const newBuffer = new Float32Array(audioBuffer.length + audioData.length);
+                                newBuffer.set(audioBuffer);
+                                newBuffer.set(audioData, audioBuffer.length);
+                                audioBuffer = newBuffer;
+                            }
+
+                            // 当缓冲区达到目标大小时，发送数据
+                            while (audioBuffer.length >= targetBufferSize) {
+                                const chunkToSend = audioBuffer.slice(0, targetBufferSize);
+                                audioBuffer = audioBuffer.slice(targetBufferSize);
+
+                                if (dataChunkCount <= 3) {
+                                    console.log(`[Audio Worklet] Sending buffered chunk with ${chunkToSend.length} samples`);
+                                }
+
+                                controller.enqueue(chunkToSend);
+                            }
+
                         } catch (e) {
                             console.error('[Audio Worklet] Failed to enqueue audio data:', e);
                             // 流已关闭/取消，清理资源

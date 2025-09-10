@@ -324,10 +324,14 @@ export class AudioRecorder {
 
         // 创建处理函数
         let audioChunkCount = 0;
+        // 检测移动设备，减少日志输出频率
+        const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const logInterval = isMobile ? 200 : 100; // 移动设备更少的日志
+
         this.speechProcessor = new WritableStream({
             write: (audioData: Float32Array) => {
                 audioChunkCount++;
-                if (audioChunkCount <= 5 || audioChunkCount % 50 === 0) {
+                if (audioChunkCount <= 3 || audioChunkCount % logInterval === 0) {
                     console.log("[VAD DEBUG] VAD speech processor write called with audio data length:", audioData.length, "chunk #", audioChunkCount);
                 }
 

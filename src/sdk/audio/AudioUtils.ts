@@ -43,20 +43,20 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
  * @param floatData Float32Array数据
  * @returns 16位PCM数据
  */
-export function float32ToPcm16(floatData: Float32Array): Uint8Array {
-  const pcmData = new Uint8Array(floatData.length * 2);
-
-  for (let i = 0; i < floatData.length; i++) {
-    const floatValue = Math.max(-1, Math.min(1, floatData[i]));
-    const int16Value = Math.round(floatValue * 32767);
-    const unsignedValue = int16Value < 0 ? int16Value + 65536 : int16Value;
-
-    // 小端序编码
-    pcmData[i * 2] = unsignedValue & 0xFF;
-    pcmData[i * 2 + 1] = (unsignedValue >> 8) & 0xFF;
+export function float32ToPcm16(floatData: Float32Array, reuse?: Uint8Array): Uint8Array {
+  const out = reuse && reuse.length >= floatData.length * 2 ? reuse : new Uint8Array(floatData.length * 2);
+  const len = floatData.length;
+  let o = 0;
+  for (let i = 0; i < len; i++) {
+    let s = floatData[i];
+    if (s > 1) s = 1;
+    else if (s < -1) s = -1;
+    const v = (s * 32767) | 0; // faster int
+    const u = v < 0 ? v + 65536 : v;
+    out[o++] = u & 0xFF;
+    out[o++] = (u >> 8) & 0xFF;
   }
-
-  return pcmData;
+  return out;
 }
 
 /**

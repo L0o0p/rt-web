@@ -20,6 +20,9 @@ export class AudioRecorder {
     // 由 VAD 事件驱动的门控标志（仅当启用 VAD 时生效）
     private isSpeaking: boolean = false;
 
+    // 复用的 PCM S16LE 输出缓冲（固定 40ms@16kHz -> 1280 字节）
+    private pcmOutBuffer: Uint8Array = new Uint8Array(AUDIO_QUALITY.FIXED_CHUNK_SIZE);
+
     // WebRTC 回声消除选项
     private webrtcOptions: WebRTCAudioOptions = {
         echoCancellation: true,
@@ -211,7 +214,7 @@ export class AudioRecorder {
                     if (this.onAudioDataCallback) {
                         this.onAudioDataCallback(audioData);
                     }
-                    const uint8Data = float32ToPcm16(audioData);
+                    const uint8Data = float32ToPcm16(audioData, this.pcmOutBuffer);
                     audioDataHandler(uint8Data);
                 }
             }))
@@ -359,17 +362,23 @@ class ResamplerProcessor extends AudioWorkletProcessor {
   }
   resampleAudioBuffer(inputBuffer) {
     if (!this.needsResampling) return inputBuffer;
+    const inData = inputBuffer;
+    const inLen = inData.length >>> 0;
     const ratio = this.inputSampleRate / this.targetSampleRate;
-    const outputLength = Math.round(inputBuffer.length / ratio);
-    const outputBuffer = new Float32Array(outputLength);
-    for (let i = 0; i < outputLength; i++) {
-      const position = i * ratio;
-      const index = Math.floor(position);
-      const fraction = position - index;
-      const next = index + 1;
-      outputBuffer[i] = inputBuffer[index] * (1 - fraction) + (next < inputBuffer.length ? inputBuffer[next] : 0) * fraction;
+    const outLen = Math.round(inLen / ratio) >>> 0;
+    const out = new Float32Array(outLen);
+    let pos = 0;
+    for (let i = 0; i < outLen; i++) {
+      const idx = pos | 0; // floor
+      const frac = pos - idx;
+      const next = idx + 1;
+      const a = inData[idx] || 0;
+      const b = next < inLen ? inData[next] : 0;
+      // linear interpolation: a + (b - a) * frac
+      out[i] = a + (b - a) * frac;
+      pos += ratio;
     }
-    return outputBuffer;
+    return out;
   }
   enqueue(data) {
     this.queue.push(data);
@@ -438,7 +447,7 @@ registerProcessor('resampler-processor', ResamplerProcessor);
     return new ReadableStream<Float32Array>({
         start: async (controller: ReadableStreamDefaultController<Float32Array>): Promise<void> => {
             try {
-                audioContext = new AudioContext({ sampleRate: options.sampleRate ?? 16000 });
+                audioContext = new AudioContext({ sampleRate: options.sampleRate ?? 16000, latencyHint: 'interactive' });
                 if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch { /* noop */ } }
                 workletObjectUrl = createResamplerWorkletURL();
                 await audioContext.audioWorklet.addModule(workletObjectUrl);
@@ -455,6 +464,7 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                         targetSampleRate: outputSampleRate,
                         targetBufferSize,
                     },
+                    numberOfOutputs: 0,
                 });
                 workletNode.port.onmessage = (event: MessageEvent<{ type: string; data: Float32Array }>): void => {
                     const { type, data } = event.data;
@@ -464,7 +474,6 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                 };
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 source.connect(workletNode);
-                workletNode.connect(audioContext.destination);
             } catch (error) {
                 console.error('Failed to setup AudioWorklet:', error);
                 throw new Error(`AudioWorklet setup failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -4,7 +4,6 @@ export {
     AudioManagerLogger,
     AudioRecorderLogger,
     AudioPlayerLogger,
-    AudioChunkerLogger,
     SDKLogger,
     Logger
 } from './GlobalLogger';

@@ -64,17 +64,18 @@ export class AudioProcessor {
 
     // 计算每通道样本数（单声道）
     const samplesPerChannel = pcmData.length / 2; // 2字节一个样本
-    const expectedSamplesPer20ms = 16000 * 0.02; // 320 samples
+    // 期望的每帧样本数（单声道 S16LE：2 字节/样本）
+    const expectedSamplesPerFrame = AUDIO_QUALITY.FIXED_CHUNK_SIZE / 2;
 
-    // 强制要求20ms帧长度
-    if (samplesPerChannel !== expectedSamplesPer20ms) {
-      console.warn('[AudioCodec] Warning: Frame size is not 20ms. got:', samplesPerChannel, 'expected:', expectedSamplesPer20ms);
-      if (samplesPerChannel < expectedSamplesPer20ms) {
+    // 强制要求固定帧长度（由 FIXED_CHUNK_SIZE 决定）
+    if (samplesPerChannel !== expectedSamplesPerFrame) {
+      console.warn('[AudioCodec] Warning: Frame size mismatch. got:', samplesPerChannel, 'expected:', expectedSamplesPerFrame);
+      if (samplesPerChannel < expectedSamplesPerFrame) {
         // 数据不足一个20ms帧，丢弃，等待聚齐
         return new Uint8Array(0);
-      } else if (samplesPerChannel > expectedSamplesPer20ms) {
-        // 大于一帧，仅编码前20ms，剩余部分应在上层切片
-        pcmData = pcmData.subarray(0, expectedSamplesPer20ms * 2);
+      } else if (samplesPerChannel > expectedSamplesPerFrame) {
+        // 大于一帧，仅编码前一帧，剩余部分应在上层切片
+        pcmData = pcmData.subarray(0, expectedSamplesPerFrame * 2);
       }
     }
 

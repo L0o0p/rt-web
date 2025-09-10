@@ -1,7 +1,6 @@
 export * from './audio/AudioManager';
 export * from './audio/AudioPlayer';
 export * from './audio/AudioRecorder';
-export * from './audio/AudioChunker';
 export * from './audio/AudioCodec';
 export * from './connection/CombinedConnectionManager';
 export * from './core/VoiceChatCore';

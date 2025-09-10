@@ -1,10 +1,10 @@
 import { EventEmitter } from '../utils/EventEmitter';
-import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
-import { AudioChunker } from "./AudioChunker";
+// import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
 import { AudioPlayer } from "./AudioPlayer";
 import { AudioRecorder } from "./AudioRecorder";
+import { audioProcessor } from "./AudioCodec";
 import { AudioManagerLogger as logger } from '../utils/GlobalLogger';
-import { type WebRTCAudioOptions } from './customIngestAudioStream';
+import type { WebRTCAudioOptions } from './AudioRecorder';
 
 /**
  * 音频事件类型定义
@@ -58,7 +58,7 @@ export interface AudioModuleConfig {
 export class AudioManager extends EventEmitter {
     private recorder: AudioRecorder;
     private player: AudioPlayer | null = null;
-    private chunker: AudioChunker | null = null;
+    private encodeOpus: boolean = true;
 
     private vadConfig: VADConfig = {
         enabled: false,
@@ -72,13 +72,11 @@ export class AudioManager extends EventEmitter {
      * 构造函数
      * @param recorder 可选的 AudioRecorder 实例，用于依赖注入
      * @param player 可选的 AudioPlayer 实例，用于依赖注入
-     * @param chunker 可选的 AudioChunker 实例，用于依赖注入
      */
-    constructor(recorder?: AudioRecorder, player?: AudioPlayer, chunker?: AudioChunker) {
+    constructor(recorder?: AudioRecorder, player?: AudioPlayer) {
         super();
         this.recorder = recorder || new AudioRecorder();
         this.player = player || null;
-        this.chunker = chunker || null;
         this.setupRecorderEvents();
         logger.info('Initialized with event-driven architecture');
     }
@@ -88,12 +86,10 @@ export class AudioManager extends EventEmitter {
      */
     private setupRecorderEvents(): void {
         this.recorder.setOnSpeechStartCallback(() => {
-            console.log('[AudioManager] Speech start detected');
             this.emit('speech:start');
         });
 
         this.recorder.setOnSpeechEndCallback((speechAudio: Float32Array) => {
-            console.log('[AudioManager] Speech end detected, audio length:', speechAudio.length);
             this.emit('speech:end', speechAudio);
         });
 
@@ -137,13 +133,10 @@ export class AudioManager extends EventEmitter {
         if (config.webrtc !== undefined) {
             this.moduleConfig.webrtc = config.webrtc;
             this.recorder.configureWebRTCAudio(config.webrtc);
-            console.log('[AudioManager] WebRTC configuration updated:', config.webrtc);
+            // info log removed to satisfy lint rules
         }
 
-        console.log('[AudioManager] Configuration updated:', {
-            vad: this.vadConfig,
-            modules: this.moduleConfig
-        });
+        // config updated
 
         return this;
     }
@@ -159,7 +152,7 @@ export class AudioManager extends EventEmitter {
         }
 
         try {
-            console.log('[AudioManager] Starting audio processing');
+            // starting
             this.isProcessing = true;
 
             // 启动VAD处理
@@ -180,7 +173,7 @@ export class AudioManager extends EventEmitter {
                 this.startUplink(this.moduleConfig.uplink);
             }
 
-            console.log('[AudioManager] Audio processing started successfully');
+            // started
             return this;
 
         } catch (error) {
@@ -203,7 +196,7 @@ export class AudioManager extends EventEmitter {
         }
 
         try {
-            console.log('[AudioManager] Stopping audio processing');
+            // stopping
 
             // 停止各个模块
             this.stopLoopback();
@@ -218,7 +211,7 @@ export class AudioManager extends EventEmitter {
                 }, 100);
             });
 
-            console.log('[AudioManager] Audio processing stopped successfully');
+            // stopped
             return this;
 
         } catch (error) {
@@ -238,10 +231,21 @@ export class AudioManager extends EventEmitter {
             this.player.playAudioChunk(audioData);
         }
 
-        // 音频上传处理
-        if (this.moduleConfig.uplink && this.chunker) {
-            // console.log('[AudioManager] Sending audio data to uplink chunker, data size:', audioData.length, 'bytes');
-            this.chunker.addAudioData(audioData);
+        // 音频上传处理（直接编码/直通，不再使用Chunker）
+        if (this.moduleConfig.uplink) {
+            const handler = this.moduleConfig.uplink.onChunkProcessed;
+            if (this.encodeOpus) {
+                try {
+                    const encoded = audioProcessor.encodeOpus(audioData);
+                    if (encoded.length) {
+                        handler(encoded);
+                    }
+                } catch (error) {
+                    console.error('[AudioManager] Opus encoding failed:', error);
+                }
+            } else {
+                handler(audioData);
+            }
         }
     }
 
@@ -262,7 +266,6 @@ export class AudioManager extends EventEmitter {
         if (this.player) {
             this.player.stopPlayback();
             this.player = null;
-            console.log('[AudioManager] Audio loopback stopped');
         }
     }
 
@@ -270,48 +273,32 @@ export class AudioManager extends EventEmitter {
      * 启动音频上传处理
      */
     private startUplink(config: NonNullable<AudioModuleConfig['uplink']>): void {
-        if (!this.chunker) {
-            const encodeOpus = config.encoderType !== 'pcm'; // 默认使用opus编码，除非明确指定pcm
-            const chunkSize = config.chunkSize || AUDIO_QUALITY.FIXED_CHUNK_SIZE;
-
-            console.log('[AudioManager] Starting audio uplink with configuration:', {
-                encoderType: config.encoderType || 'opus', // 默认显示opus
-                encodeOpus: encodeOpus,
-                chunkSize: chunkSize,
-                hasChunkProcessor: !!config.onChunkProcessed
-            });
-
-            this.chunker = new AudioChunker(
-                config.onChunkProcessed,
-                chunkSize,
-                encodeOpus
-            );
-            logger.info('Audio uplink started');
-        }
+        this.encodeOpus = config.encoderType !== 'pcm';
+        logger.info('Audio uplink configured');
     }
 
     /**
      * 停止音频上传处理
      */
-    private stopUplink(): void {
-        if (this.chunker) {
-            this.chunker.stop();
-            this.chunker = null;
-            console.log('[AudioManager] Audio uplink stopped');
-        }
-    }
+    private stopUplink(): void { /* no-op */ }
 
     /**
      * 获取当前状态
      * @returns 返回一个包含当前状态信息的对象
      */
-    getStatus() {
+    getStatus(): {
+        isProcessing: boolean;
+        vadConfig: VADConfig;
+        moduleConfig: AudioModuleConfig;
+        hasPlayer: boolean;
+        hasChunker: boolean;
+    } {
         return {
             isProcessing: this.isProcessing,
             vadConfig: { ...this.vadConfig },
             moduleConfig: { ...this.moduleConfig },
             hasPlayer: !!this.player,
-            hasChunker: !!this.chunker
+            hasChunker: false
         };
     }
 
@@ -321,8 +308,8 @@ export class AudioManager extends EventEmitter {
      * @returns 返回当前实例，支持链式调用
      */
     setOpusEncoding(enabled: boolean): this {
-        this.chunker?.setEncodeOpus(enabled);
-        console.log('[AudioManager] Opus encoding set to:', enabled);
+        this.encodeOpus = enabled;
+        // set opus encoding
         return this;
     }
 
@@ -337,7 +324,7 @@ export class AudioManager extends EventEmitter {
         }
         this.moduleConfig.webrtc = { ...this.moduleConfig.webrtc, ...options };
         this.recorder.configureWebRTCAudio(options);
-        console.log('[AudioManager] WebRTC audio configuration updated:', options);
+        // updated
         return this;
     }
 
@@ -352,7 +339,7 @@ export class AudioManager extends EventEmitter {
             this.moduleConfig.webrtc = {};
         }
         this.moduleConfig.webrtc.echoCancellation = enabled;
-        console.log('[AudioManager] Echo cancellation set to:', enabled);
+        // updated
         return this;
     }
 
@@ -367,7 +354,7 @@ export class AudioManager extends EventEmitter {
             this.moduleConfig.webrtc = {};
         }
         this.moduleConfig.webrtc.noiseSuppression = enabled;
-        console.log('[AudioManager] Noise suppression set to:', enabled);
+        // updated
         return this;
     }
 
@@ -382,7 +369,7 @@ export class AudioManager extends EventEmitter {
             this.moduleConfig.webrtc = {};
         }
         this.moduleConfig.webrtc.autoGainControl = enabled;
-        console.log('[AudioManager] Auto gain control set to:', enabled);
+        // updated
         return this;
     }
 

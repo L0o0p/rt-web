@@ -18,7 +18,6 @@ export const globalLogger = new GlobalLogger({ prefix: 'SDK', level: 'warn' });
 export const AudioManagerLogger = globalLogger;
 export const AudioRecorderLogger = globalLogger;
 export const AudioPlayerLogger = globalLogger;
-export const AudioChunkerLogger = globalLogger;
 export const SDKLogger = globalLogger;
 
 // 导出Logger类，以便其他模块可以使用

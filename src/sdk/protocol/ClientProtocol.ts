@@ -28,7 +28,7 @@ export const AUDIO_QUALITY = {
     SAMPLE_RATE: 16000, // 固定采样率
     TARGET_LATENCY_MS: 100, // 低延迟目标
     VOLUME_BOOST: 1.0, // 不额外调整音量，在解码时处理
-    FIXED_CHUNK_SIZE: 640, // 20ms的音频块大小（16000Hz * 2字节/sample * 0.02s = 640字节）
+    FIXED_CHUNK_SIZE: 1280, // 40ms的音频块大小（16000Hz * 2字节/sample * 0.04s = 1280字节）
 } as const;
 
 /**

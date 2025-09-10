@@ -442,32 +442,7 @@ export const App = () => {
       }
 
       const handlers = new Map<string, (payload: unknown) => void>();
-      // 按 response_id 缓冲PCM字节，基于时间阈值（50ms）聚合后播放
-      type BufferState = { chunks: Uint8Array[]; lastFlushAt: number };
-      const pcmBuffersRef = new Map<string, BufferState>();
-      const FRAME_DURATION_MS = 20; // 每帧20ms
-      const FLUSH_INTERVAL_MS = 50; // 目标缓冲时长 ~50ms
-
-      const flushPlay = (responseId: string, now: number = performance.now()) => {
-        // 动态检查音频播放状态和播放器实例
-        if (!audioPlayerRef.current || !isPlayingDownstreamAudioRef.current) return;
-        const state = pcmBuffersRef.get(responseId);
-        if (!state || state.chunks.length === 0) return;
-        const list = state.chunks;
-        let total = 0;
-        for (const chunk of list) total += chunk.length;
-        const merged = new Uint8Array(total);
-        let offset = 0;
-        for (const chunk of list) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
-        }
-        // 重置并播放
-        state.chunks = [];
-        state.lastFlushAt = now;
-        pcmBuffersRef.set(responseId, state);
-        audioPlayerRef.current.playAudioChunk(merged);
-      };
+      // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
         switch (eventName) {
@@ -545,23 +520,12 @@ export const App = () => {
             try {
               const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
               let pcmBytes = audioProcessor.decodeOpus(opusBytes);
-              // 解码失败或返回空时，回退直接按PCM播放
               if (!pcmBytes || pcmBytes.length === 0) {
                 pcmBytes = opusBytes;
               }
-              if (pcmBytes && pcmBytes.length > 0) {
-                const rid = audioDeltaEvt.response_id;
-                const now = performance.now();
-                const state = pcmBuffersRef.get(rid) || { chunks: [], lastFlushAt: now } as BufferState;
-                state.chunks.push(pcmBytes);
-                // 若距离上次播放已超过50ms，或累计帧时长超过50ms则冲刷
-                const elapsed = now - state.lastFlushAt;
-                const accumulatedMs = state.chunks.length * FRAME_DURATION_MS;
-                if (elapsed >= FLUSH_INTERVAL_MS || accumulatedMs >= FLUSH_INTERVAL_MS) {
-                  flushPlay(rid, now);
-                } else {
-                  pcmBuffersRef.set(rid, state);
-                }
+              if (pcmBytes && pcmBytes.length > 0 && audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
+                // 直接播放当前分片
+                audioPlayerRef.current.playAudioChunk(pcmBytes);
               }
             } catch (e) {
               console.error('[APP] Failed to decode/play response.audio.delta:', e);
@@ -569,21 +533,11 @@ export const App = () => {
             break;
           }
 
-          case 'output_audio_buffer.started': {
-            const bufferStartedEvt = payload as OutputAudioBufferStartedEvent;
-            if (bufferStartedEvt && typeof bufferStartedEvt.response_id === 'string') {
-              pcmBuffersRef.set(bufferStartedEvt.response_id, { chunks: [], lastFlushAt: performance.now() });
-            }
-            break;
-          }
+          // 删除 started/stopped 的本地缓冲管理，保持最小化
 
           case 'response.audio.done':
           case 'output_audio_buffer.stopped': {
-            const respId = (payload as Partial<ResponseAudioDoneEvent> & { response_id?: string }).response_id;
-            if (respId) {
-              flushPlay(respId);
-              pcmBuffersRef.delete(respId);
-            }
+            // 无需冲刷，本地不再累积
             break;
           }
 

@@ -10,6 +10,9 @@ RUN corepack prepare yarn@4.9.4 --activate
 # 复制依赖文件
 COPY package.json yarn.lock ./
 
+# 设置 Yarn 配置
+RUN yarn config set nodeLinker node-modules
+
 # 安装依赖
 RUN yarn install --frozen-lockfile
 
@@ -20,7 +23,7 @@ COPY . .
 RUN yarn build
 
 # 生产阶段 - 使用 nginx 服务静态文件
-FROM nginx:alpine
+FROM harbor.luxhub.top:2097/docker/nginx:alpine
 
 # 复制构建产物
 COPY --from=builder /usr/src/app/dist /usr/share/nginx/html

@@ -1,5 +1,5 @@
 # 构建阶段
-FROM --platform=linux/amd64 node:22 AS builder
+FROM --platform=linux/amd64 harbor.luxhub.top:2097/docker/node:22 AS builder
 
 WORKDIR /usr/src/app
 

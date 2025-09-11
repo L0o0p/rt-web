@@ -673,7 +673,9 @@ export const App = () => {
             <div>Squady</div>
             <StatusPoint />
           </div>
-          <div className={styles.squadySubtext}>点击开始对话</div>
+          <div className={styles.squadySubtext}>
+            {isUserSpeaking ? '正在聆听...' : '点击开始对话'}
+          </div>
         </div>
       </div>
 

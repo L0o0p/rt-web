@@ -12,7 +12,7 @@ export class AudioRecorder {
     private vadEnabled: boolean = false;
     private onSpeechStartCallback: (() => void) | null = null;
     private onSpeechEndCallback: ((speechAudio: Float32Array) => void) | null = null;
-    private vadThreshold: number = 0.5;  // 使用推荐的阈值
+    private vadThreshold: number = 0.52;  // 使用推荐的阈值
 
     // 音频数据回调，供外部收集音频
     private onAudioDataCallback: ((audioData: Float32Array) => void) | null = null;
@@ -152,7 +152,8 @@ export class AudioRecorder {
             onSpeechEnd: options.onSpeechEnd,
             onMisfire: options.onMisfire,
             threshold: options.threshold || 0.5,
-            noEmit: options.noEmit !== undefined ? options.noEmit : false
+            noEmit: options.noEmit !== undefined ? options.noEmit : false,
+            lookBackDurationMs: 500
         });
     }
 

@@ -23,6 +23,12 @@ export class AudioRecorder {
     // 复用的 PCM S16LE 输出缓冲（固定 40ms@16kHz -> 1280 字节）
     private pcmOutBuffer: Uint8Array = new Uint8Array(AUDIO_QUALITY.FIXED_CHUNK_SIZE);
 
+    // 自定义回溯窗口（毫秒），在编码分支通过环形缓冲实现
+    private lookBackDurationMs: number = 384;
+    private preSpeechBuffer: Float32Array[] = [];
+    private needFlushPreBuffer: boolean = false;
+    private readonly frameDurationMs: number = (AUDIO_QUALITY.FIXED_CHUNK_SIZE / 2) / AUDIO_QUALITY.SAMPLE_RATE * 1000; // 40ms
+
     // WebRTC 回声消除选项
     private webrtcOptions: WebRTCAudioOptions = {
         echoCancellation: true,
@@ -70,6 +76,14 @@ export class AudioRecorder {
      */
     setOnAudioDataCallback(callback: ((audioData: Float32Array) => void) | null): void {
         this.onAudioDataCallback = callback;
+    }
+
+    /**
+     * 设置回溯时长（毫秒）。实际回溯由工作线程的环形缓冲实现。
+     */
+    setLookBackDurationMs(ms: number): void {
+        const clamped = Math.max(0, Math.floor(ms));
+        this.lookBackDurationMs = clamped;
     }
 
     /**
@@ -153,7 +167,6 @@ export class AudioRecorder {
             onMisfire: options.onMisfire,
             threshold: options.threshold || 0.5,
             noEmit: options.noEmit !== undefined ? options.noEmit : false,
-            lookBackDurationMs: 500
         });
     }
 
@@ -184,6 +197,8 @@ export class AudioRecorder {
             onSpeechStart: () => {
                 this.isSpeaking = true;
                 if (this.onSpeechStartCallback) this.onSpeechStartCallback();
+                // 标记需要回溯冲刷
+                this.needFlushPreBuffer = true;
             },
             onSpeechEnd: (speechAudio: Float32Array) => {
                 this.isSpeaking = false;
@@ -208,8 +223,30 @@ export class AudioRecorder {
         const encodePipelinePromise = streamForEncode
             .pipeTo(new WritableStream<Float32Array>({
                 write: (audioData: Float32Array): void => {
+                    // 维护回溯环形缓冲
+                    const maxFrames = this.lookBackDurationMs > 0 ? Math.max(1, Math.ceil(this.lookBackDurationMs / this.frameDurationMs)) : 0;
+                    if (maxFrames > 0) {
+                        this.preSpeechBuffer.push(audioData);
+                        if (this.preSpeechBuffer.length > maxFrames) {
+                            this.preSpeechBuffer.shift();
+                        }
+                    }
+
                     if (this.vadEnabled && !this.isSpeaking) {
-                        return; // 门控：静音期丢弃
+                        return; // 静音期仅缓冲，不发送
+                    }
+
+                    // 首次讲话：先冲刷回溯缓冲
+                    if (this.vadEnabled && this.needFlushPreBuffer) {
+                        if (this.preSpeechBuffer.length) {
+                            for (let i = 0; i < this.preSpeechBuffer.length; i++) {
+                                const backChunk = this.preSpeechBuffer[i];
+                                const backBytes = float32ToPcm16(backChunk, this.pcmOutBuffer);
+                                audioDataHandler(backBytes);
+                            }
+                        }
+                        this.preSpeechBuffer.length = 0;
+                        this.needFlushPreBuffer = false;
                     }
                     // 通知外部有音频数据（用于外部收集）
                     if (this.onAudioDataCallback) {
@@ -360,6 +397,7 @@ class ResamplerProcessor extends AudioWorkletProcessor {
     this.queuedLength = 0;
     this.chunkCount = 0;
     this.needsResampling = this.inputSampleRate !== this.targetSampleRate;
+
   }
   resampleAudioBuffer(inputBuffer) {
     if (!this.needsResampling) return inputBuffer;

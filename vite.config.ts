@@ -23,11 +23,7 @@ export default defineConfig({
     }
   },
   server: {
-    https: {
-      // 使用自签名证书
-      key: './localhost-key.pem',
-      cert: './localhost.pem'
-    },
+    // 移除 https 配置，支持 http 访问
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
@@ -40,7 +36,7 @@ export default defineConfig({
     hmr: {
       port: 5173,
       host: '192.168.3.62',
-      protocol: 'wss',
+      protocol: 'ws', // 改为 ws 支持 http
       // 添加客户端配置
       clientPort: 5173
     }

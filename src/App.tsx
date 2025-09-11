@@ -10,10 +10,12 @@ import { RealTime } from './RealTime'
 import { StatusPoint } from './component/statusPoint'
 import type { AudioManager } from './sdk/audio/AudioManager'
 import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent, InputAudioSpeechStartedEvent, InputAudioSpeechStoppedEvent } from './sdk/protocol/ClientProtocol';
+import { ProtocolId } from './sdk/protocol/ClientProtocol';
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
-import type { VoiceChatCore } from './sdk'
+import type { VoiceChatCore } from './sdk';
+import { VisionTestPanel } from './components/VisionTestPanel';
 
 // 趋势图组件
 const TrendChart = React.memo(({ responseMetrics }: {
@@ -102,6 +104,15 @@ export const App = () => {
 
   const [vadThreshold, setVadThreshold] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
+  // 图像上传相关状态
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  // 会话状态
+  const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
+    connected: false,
+    sessionCreated: false
+  });
   // 展示下行文本（WS返回的文本）
   const [currentText, setCurrentText] = useState('');
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
@@ -313,6 +324,101 @@ export const App = () => {
     // setIsUserSpeaking(!isUserSpeaking)
     toggleVadProcessing()
   }, [toggleVadProcessing]);
+
+  // 处理图像选择
+  const handleImageSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 验证文件类型
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      alert('仅支持 JPEG、PNG、WebP 格式的图片');
+      return;
+    }
+
+    // 验证文件大小（5MB限制）
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      alert('图片文件大小不能超过 5MB');
+      return;
+    }
+
+    setSelectedImage(file);
+
+    // 创建预览
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImagePreview(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // 发送图像
+  const handleSendImage = useCallback(async () => {
+    if (!selectedImage || isImageUploading) return;
+
+    // 检查连接状态
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    if (!voiceChatCore?.isConnected) {
+      alert('WebSocket未连接，请等待连接建立后再发送图像');
+      return;
+    }
+
+    if (!voiceChatCore?.isSessionCreated) {
+      alert('会话未创建，请先进行语音对话后再发送图像');
+      return;
+    }
+
+    console.log('[IMAGE] 开始发送图像，会话ID:', voiceChatCore.currentSessionId);
+
+    setIsImageUploading(true);
+    try {
+      // 将文件转换为 Uint8Array
+      const arrayBuffer = await selectedImage.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+
+      console.log('[IMAGE] 图像数据准备完成，大小:', uint8Array.length, '字节');
+
+      // 发送图像数据（使用协议ID 100 - All）
+      const result = realTime.current?.sendImageData(uint8Array, ProtocolId.All);
+
+      if (result) {
+        console.log(`[IMAGE] 图像发送成功: ${selectedImage.name}, 大小: ${selectedImage.size} 字节`);
+        console.log('[IMAGE] 等待服务器视觉分析响应...');
+
+        // 清理状态
+        setSelectedImage(null);
+        setImagePreview(null);
+        // 清理文件输入
+        const fileInput = document.getElementById('imageInput') as HTMLInputElement;
+        if (fileInput) {
+          fileInput.value = '';
+        }
+
+        // 显示成功提示
+        alert('图像已成功发送，请等待AI分析结果');
+      } else {
+        console.error('[IMAGE] 图像发送失败 - sendImageData返回false');
+        alert('图像发送失败，请检查连接状态和会话状态');
+      }
+    } catch (error) {
+      console.error('[IMAGE] 图像发送失败:', error);
+      alert(`图像发送失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setIsImageUploading(false);
+    }
+  }, [selectedImage, isImageUploading]);
+
+  // 取消图像选择
+  const handleCancelImage = useCallback(() => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    const fileInput = document.getElementById('imageInput') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = '';
+    }
+  }, []);
 
   // // 音频传输控制
   // const startAudioTransmission = () => {
@@ -608,6 +714,17 @@ export const App = () => {
 
   const [, setIsWsConnected] = useAtom(wsConnectedAtom);
 
+  // 更新会话状态
+  const updateSessionStatus = useCallback(() => {
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    if (voiceChatCore) {
+      setSessionStatus({
+        connected: voiceChatCore.isConnected,
+        sessionCreated: voiceChatCore.isSessionCreated
+      });
+    }
+  }, []);
+
   useEffect(() => {
     const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
 
@@ -615,30 +732,21 @@ export const App = () => {
     const handleOpen = () => {
       // 连接成功时，connectionStatusChange事件应该已经更新了状态
       setIsWsConnected(true);
+      updateSessionStatus();
     };
 
     const handleClose = () => {
       setIsWsConnected(false);
-      // setConnectionStatus({
-      //     state: 'disconnected',
-      //     message: 'WebSocket连接已断开'
-      // });
+      updateSessionStatus();
     };
 
     const handleError = () => {
-      // setConnectionStatus({
-      //     state: 'error',
-      //     message: 'WebSocket连接发生错误',
-      //     error: error.message || '未知错误'
-      // });
+      updateSessionStatus();
     };
 
     // 监听会话创建事件
     const handleSessionCreated = () => {
-      // setSessionStatus({
-      //     created: true,
-      //     sessionId: data.session?.id || null
-      // });
+      updateSessionStatus();
     };
 
     // 注册事件监听器
@@ -656,7 +764,13 @@ export const App = () => {
       voiceChatCore.off('error', handleError);
       voiceChatCore.off('session.created', handleSessionCreated);
     };
-  }, [realTime, setIsWsConnected]);
+  }, [realTime, setIsWsConnected, updateSessionStatus]);
+
+  // 定期更新会话状态
+  useEffect(() => {
+    const interval = setInterval(updateSessionStatus, 1000); // 每秒更新一次
+    return () => clearInterval(interval);
+  }, [updateSessionStatus]);
 
   return (
     <div className={styles.container}>
@@ -676,6 +790,76 @@ export const App = () => {
           <div className={styles.squadySubtext}>
             {isUserSpeaking ? '正在聆听...' : '点击开始对话'}
           </div>
+        </div>
+
+        {/* 会话状态指示器 */}
+        <div className={styles.sessionStatusIndicator}>
+          <div className={styles.statusItem}>
+            <span className={`${styles.statusDot} ${sessionStatus.connected ? styles.connected : styles.disconnected}`}></span>
+            <span>连接状态: {sessionStatus.connected ? '已连接' : '未连接'}</span>
+          </div>
+          <div className={styles.statusItem}>
+            <span className={`${styles.statusDot} ${sessionStatus.sessionCreated ? styles.connected : styles.disconnected}`}></span>
+            <span>会话状态: {sessionStatus.sessionCreated ? '已创建' : '未创建'}</span>
+          </div>
+        </div>
+
+        {/* 图像上传区域 */}
+        <div className={styles.imageUploadSection}>
+          <input
+            id="imageInput"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleImageSelect}
+            style={{ display: 'none' }}
+            disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+          />
+
+          {!selectedImage ? (
+            <div>
+              <label
+                htmlFor="imageInput"
+                className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
+              >
+                📷 选择图片
+              </label>
+              {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
+                <div className={styles.uploadTip}>
+                  请先进行语音对话以建立会话
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className={styles.imagePreviewContainer}>
+              {imagePreview && (
+                <img
+                  src={imagePreview}
+                  alt="预览"
+                  className={styles.imagePreview}
+                />
+              )}
+              <div className={styles.imageActions}>
+                <span className={styles.imageInfo}>
+                  {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
+                </span>
+                <div className={styles.imageButtons}>
+                  <button
+                    onClick={handleSendImage}
+                    disabled={isImageUploading}
+                    className={styles.sendButton}
+                  >
+                    {isImageUploading ? '发送中...' : '发送图片'}
+                  </button>
+                  <button
+                    onClick={handleCancelImage}
+                    className={styles.cancelButton}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -753,6 +937,12 @@ export const App = () => {
           {currentText || finalTexts[0] || ''}
         </ReactMarkdown>
       </div>
+
+      {/* 视觉功能测试面板 (开发调试用) */}
+      <VisionTestPanel
+        realTime={realTime.current}
+        sessionStatus={sessionStatus}
+      />
     </div>
   )
 }

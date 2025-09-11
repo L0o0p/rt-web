@@ -163,7 +163,7 @@ export class BinaryMessageParser implements MessageParser<ArrayBuffer> {
           channels: 1
         };
       }
-      
+
       case CommandId.TextData: {
         // 文本数据载荷
         const text = new TextDecoder().decode(binaryMessage.payload);
@@ -172,12 +172,22 @@ export class BinaryMessageParser implements MessageParser<ArrayBuffer> {
           text
         };
       }
-      
+
+      case CommandId.ImageData: {
+        // 图像数据载荷
+        const buffer = binaryMessage.payload.buffer;
+        return {
+          type: "image_data",
+          data: this.arrayBufferToBase64(buffer),
+          size: binaryMessage.payload.length
+        };
+      }
+
       case CommandId.Ping: {
         // Ping命令没有载荷
         return undefined;
       }
-      
+
       default:
         // 其他命令可能没有载荷
         return undefined;

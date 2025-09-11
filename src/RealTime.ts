@@ -1,6 +1,7 @@
 import { AudioManager } from './sdk/audio/AudioManager';
 import { VoiceChatCore } from './sdk/core/VoiceChatCore';
 import type { SessionConfigPayload } from './sdk/protocol/ClientProtocol';
+import { ProtocolId } from './sdk/protocol/ClientProtocol';
 import { float32ToPcm16 } from './sdk/audio/AudioUtils';
 
 export class RealTime {
@@ -30,7 +31,7 @@ export class RealTime {
     setSessionConfig(config: Partial<SessionConfigPayload>): void {
         this.voiceChatCore.setSessionConfig(config);
     }
-    
+
     startSession(config?: Partial<SessionConfigPayload>): void {
         this.voiceChatCore.startSession(config);
     }
@@ -82,6 +83,13 @@ export class RealTime {
         }
         const pcmBytes = float32ToPcm16(dataToSend);
         this.voiceChatCore.sendEncodedAudioData(pcmBytes);
+    }
+
+    /**
+     * 发送图像数据
+     */
+    public sendImageData(imageData: Uint8Array, protocolId?: ProtocolId): boolean {
+        return this.voiceChatCore.sendImageData(imageData, protocolId);
     }
 }
 

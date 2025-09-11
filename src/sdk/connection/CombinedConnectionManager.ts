@@ -144,13 +144,20 @@ export class CombinedConnectionManager extends EventEmitter {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       try {
         const bytes = message.toBytes();
-        logger.debug(`发送二进制消息: 大小=${bytes.length}字节, 消息类型=${message.header.commandId}`);
+        logger.info(`[BINARY] 发送二进制消息 - 会话ID: ${message.header.sessionId}, 协议ID: ${message.header.protocolId}, 命令ID: ${message.header.commandId}, 总大小: ${bytes.length}字节`);
+
+        // 如果是图像数据，记录更多信息
+        if (message.header.commandId === 6) { // ImageData command
+          logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节`);
+        }
+
         this.websocket.send(bytes);
+        logger.info(`[BINARY] 二进制消息发送成功`);
       } catch (error) {
-        logger.error(`发送二进制消息失败: ${error instanceof Error ? error.message : String(error)}`);
+        logger.error(`[BINARY] 发送二进制消息失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else {
-      logger.error('WebSocket未连接，无法发送二进制消息');
+      logger.error('[BINARY] WebSocket未连接，无法发送二进制消息');
     }
   }
 

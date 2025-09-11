@@ -53,7 +53,8 @@ export const CommandId = {
     AudioChunk: 3,
     TextData: 4,
     StopInput: 5,
-    Ping: 6,
+    ImageData: 6,
+    Ping: 7,
     Result: 100,
     Error: 255,
 } as const;
@@ -67,6 +68,7 @@ export type MessagePayload =
     // 客户端发送的消息载荷类型
     | AudioChunkPayload
     | TextDataPayload
+    | ImageDataPayload
     | SessionConfigPayload
     | ConversationItemCreatePayload
     // 服务端发送的事件载荷类型
@@ -112,6 +114,12 @@ export interface AudioChunkPayload {
 export interface TextDataPayload {
     type: "text_data";
     text: string;
+}
+
+export interface ImageDataPayload {
+    type: "image_data";
+    data: string; // Base64编码的图像数据
+    size: number; // 图像数据大小
 }
 
 export interface AudioConfig {
@@ -464,6 +472,12 @@ export class BinaryHeader {
             case 5:
                 commandId = CommandId.StopInput;
                 break;
+            case 6:
+                commandId = CommandId.ImageData;
+                break;
+            case 7:
+                commandId = CommandId.Ping;
+                break;
             case 100:
                 commandId = CommandId.Result;
                 break;
@@ -583,6 +597,14 @@ export class ClientBinaryMessage {
     static createPing(sessionId: string): ClientBinaryMessage {
         const header = new BinaryHeader(sessionId, ProtocolId.Control, CommandId.Ping);
         return new ClientBinaryMessage(header, new Uint8Array(0));
+    }
+
+    /**
+     * 创建图像数据二进制消息
+     */
+    static createImageData(sessionId: string, imageBytes: Uint8Array, protocolId: ProtocolId = ProtocolId.All): ClientBinaryMessage {
+        const header = new BinaryHeader(sessionId, protocolId, CommandId.ImageData);
+        return new ClientBinaryMessage(header, imageBytes);
     }
 }
 

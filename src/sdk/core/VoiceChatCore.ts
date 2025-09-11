@@ -1,6 +1,6 @@
 import { CombinedConnectionManager } from '../connection/CombinedConnectionManager';
 import { globalLogger as logger } from '../utils/GlobalLogger';
-import { ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
+import { ClientBinaryMessage as BinaryMessage, ProtocolId } from '../protocol/ClientProtocol';
 import type { SessionConfigPayload } from '../protocol/ClientProtocol';
 import { EventEmitter } from '../utils/EventEmitter';
 
@@ -169,6 +169,69 @@ export class VoiceChatCore extends EventEmitter {
 
     // 重新创建会话
     this.connectionManager.recreateSession(undefined, config);
+  }
+
+  /**
+   * 发送图像数据
+   */
+  public sendImageData(imageData: Uint8Array, protocolId?: ProtocolId): boolean {
+    // 检查输入数据是否为空
+    if (!imageData || imageData.length === 0) {
+      logger.warn('尝试发送空的图像数据，已阻止发送');
+      return false;
+    }
+
+    // 记录发送的图像数据信息
+    logger.debug(`准备发送图像数据: ${imageData.length} 字节`);
+
+    // 验证图像大小（默认5MB限制）
+    const maxImageSize = 5 * 1024 * 1024; // 5MB
+    if (imageData.length > maxImageSize) {
+      logger.warn(`图像文件过大: ${imageData.length} 字节，最大限制: ${maxImageSize} 字节`);
+      return false;
+    }
+
+    if (this.isDestroyed) {
+      logger.warn('尝试向已销毁的实例发送图像数据');
+      return false;
+    }
+
+    if (!this.connectionManager.isConnected) {
+      logger.warn('WebSocket未连接，无法发送图像数据');
+      return false;
+    }
+
+    if (!this.connectionManager.isSessionCreated) {
+      logger.warn('会话未创建，无法发送图像数据');
+      return false;
+    }
+
+    try {
+      // 获取会话ID
+      const sessionId = this.connectionManager.currentSessionId;
+      if (!sessionId) {
+        logger.warn('会话ID缺失，无法发送图像数据');
+        return false;
+      }
+
+      // 使用提供的协议ID或默认为All(100)
+      const finalProtocolId = protocolId || ProtocolId.All;
+
+      logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节`);
+
+      // 创建并发送二进制图像数据消息
+      const imageMessage = BinaryMessage.createImageData(sessionId, imageData, finalProtocolId);
+
+      logger.info(`[IMAGE] 二进制消息已创建，头部信息 - 会话ID: ${imageMessage.header.sessionId}, 协议ID: ${imageMessage.header.protocolId}, 命令ID: ${imageMessage.header.commandId}`);
+
+      this.connectionManager.sendBinaryMessage(imageMessage);
+
+      logger.info(`[IMAGE] 图像数据发送完成: ${imageData.length} 字节，协议ID: ${finalProtocolId}`);
+      return true;
+    } catch (error) {
+      logger.error(`[IMAGE] 发送图像数据失败: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   /**

@@ -148,7 +148,15 @@ export class CombinedConnectionManager extends EventEmitter {
 
         // 如果是图像数据，记录更多信息
         if (message.header.commandId === 6) { // ImageData command
-          logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节`);
+          // 解析新的payload格式信息
+          if (message.payload.length >= 4) {
+            const promptLengthView = new DataView(message.payload.buffer, message.payload.byteOffset, 4);
+            const promptLength = promptLengthView.getUint32(0, true); // 小端序
+            const imageDataLength = message.payload.length - 4 - promptLength;
+            logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节 (提示词长度: ${promptLength}字节, 图像数据: ${imageDataLength}字节)`);
+          } else {
+            logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节 (格式异常: payload太短)`);
+          }
         }
 
         this.websocket.send(bytes);

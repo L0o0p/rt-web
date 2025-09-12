@@ -173,8 +173,11 @@ export class VoiceChatCore extends EventEmitter {
 
   /**
    * 发送图像数据
+   * @param imageData 图像二进制数据
+   * @param prompt 可选的提示词，如果不提供则使用空字符串
+   * @param protocolId 协议ID，默认为All
    */
-  public sendImageData(imageData: Uint8Array, protocolId?: ProtocolId): boolean {
+  public sendImageData(imageData: Uint8Array, prompt?: string, protocolId?: ProtocolId): boolean {
     // 检查输入数据是否为空
     if (!imageData || imageData.length === 0) {
       logger.warn('尝试发送空的图像数据，已阻止发送');
@@ -217,16 +220,17 @@ export class VoiceChatCore extends EventEmitter {
       // 使用提供的协议ID或默认为All(100)
       const finalProtocolId = protocolId || ProtocolId.All;
 
-      logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节`);
+      const promptText = prompt || "";
+      logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节, 提示词: "${promptText}"`);
 
-      // 创建并发送二进制图像数据消息
-      const imageMessage = BinaryMessage.createImageData(sessionId, imageData, finalProtocolId);
+      // 创建并发送二进制图像数据消息（新的payload格式）
+      const imageMessage = BinaryMessage.createImageData(sessionId, imageData, promptText, finalProtocolId);
 
-      logger.info(`[IMAGE] 二进制消息已创建，头部信息 - 会话ID: ${imageMessage.header.sessionId}, 协议ID: ${imageMessage.header.protocolId}, 命令ID: ${imageMessage.header.commandId}`);
+      logger.info(`[IMAGE] 二进制消息已创建，头部信息 - 会话ID: ${imageMessage.header.sessionId}, 协议ID: ${imageMessage.header.protocolId}, 命令ID: ${imageMessage.header.commandId}, 总payload大小: ${imageMessage.payload.length} 字节`);
 
       this.connectionManager.sendBinaryMessage(imageMessage);
 
-      logger.info(`[IMAGE] 图像数据发送完成: ${imageData.length} 字节，协议ID: ${finalProtocolId}`);
+      logger.info(`[IMAGE] 图像数据发送完成: 图像${imageData.length}字节 + 提示词${new TextEncoder().encode(promptText).length}字节，协议ID: ${finalProtocolId}`);
       return true;
     } catch (error) {
       logger.error(`[IMAGE] 发送图像数据失败: ${error instanceof Error ? error.message : String(error)}`);

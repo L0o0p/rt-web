@@ -29,6 +29,7 @@ export const VisionTestPanel: React.FC<VisionTestPanelProps> = ({ realTime, sess
 
         // 创建一个简单的测试图像 (1x1 像素的透明PNG)
         const testImageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+        const testPrompt = '这是一个测试图像，请分析一下';
 
         try {
             // 将Base64转换为Uint8Array
@@ -39,17 +40,21 @@ export const VisionTestPanel: React.FC<VisionTestPanelProps> = ({ realTime, sess
             }
 
             addLog(`创建测试图像数据: ${bytes.length} 字节`);
+            addLog(`测试提示词: "${testPrompt}"`);
 
             const voiceChatCore = realTime?.getVoiceChatCore();
             addLog(`会话ID: ${voiceChatCore?.currentSessionId}`);
             addLog(`连接状态: ${voiceChatCore?.isConnected}`);
             addLog(`会话状态: ${voiceChatCore?.isSessionCreated}`);
 
-            // 发送图像
-            const result = realTime?.sendImageData(bytes, ProtocolId.All);
+            // 发送图像（包含提示词）
+            const result = realTime?.sendImageData(bytes, testPrompt, ProtocolId.All);
 
             if (result) {
-                addLog('✅ 图像发送成功');
+                addLog('✅ 图像发送成功（新payload格式）');
+                addLog(`   - 图像数据: ${bytes.length} 字节`);
+                addLog(`   - 提示词: ${new TextEncoder().encode(testPrompt).length} 字节`);
+                addLog(`   - 总payload: ${4 + new TextEncoder().encode(testPrompt).length + bytes.length} 字节`);
             } else {
                 addLog('❌ 图像发送失败');
             }

@@ -108,6 +108,7 @@ export const App = () => {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isImageUploading, setIsImageUploading] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState<string>(''); // 图像提示词
   // 会话状态
   const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
     connected: false,
@@ -379,9 +380,10 @@ export const App = () => {
       const uint8Array = new Uint8Array(arrayBuffer);
 
       console.log('[IMAGE] 图像数据准备完成，大小:', uint8Array.length, '字节');
+      console.log('[IMAGE] 提示词:', imagePrompt || '(无提示词)');
 
-      // 发送图像数据（使用协议ID 100 - All）
-      const result = realTime.current?.sendImageData(uint8Array, ProtocolId.All);
+      // 发送图像数据（使用协议ID 100 - All，包含提示词）
+      const result = realTime.current?.sendImageData(uint8Array, imagePrompt, ProtocolId.All);
 
       if (result) {
         console.log(`[IMAGE] 图像发送成功: ${selectedImage.name}, 大小: ${selectedImage.size} 字节`);
@@ -390,6 +392,7 @@ export const App = () => {
         // 清理状态
         setSelectedImage(null);
         setImagePreview(null);
+        setImagePrompt(''); // 清理提示词
         // 清理文件输入
         const fileInput = document.getElementById('imageInput') as HTMLInputElement;
         if (fileInput) {
@@ -414,6 +417,7 @@ export const App = () => {
   const handleCancelImage = useCallback(() => {
     setSelectedImage(null);
     setImagePreview(null);
+    setImagePrompt(''); // 清理提示词
     const fileInput = document.getElementById('imageInput') as HTMLInputElement;
     if (fileInput) {
       fileInput.value = '';
@@ -817,6 +821,18 @@ export const App = () => {
 
           {!selectedImage ? (
             <div>
+              {/* 提示词输入框 */}
+              <div className={styles.promptInputContainer}>
+                <textarea
+                  placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
+                  value={imagePrompt}
+                  onChange={(e) => setImagePrompt(e.target.value)}
+                  className={styles.promptInput}
+                  rows={3}
+                  disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+                />
+              </div>
+
               <label
                 htmlFor="imageInput"
                 className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
@@ -842,6 +858,16 @@ export const App = () => {
                 <span className={styles.imageInfo}>
                   {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
                 </span>
+                {imagePrompt && (
+                  <div className={styles.promptPreview}>
+                    <strong>提示词:</strong> {imagePrompt}
+                  </div>
+                )}
+                {!imagePrompt && (
+                  <div className={styles.promptPreview}>
+                    <em>将使用最后一轮对话内容作为提示</em>
+                  </div>
+                )}
                 <div className={styles.imageButtons}>
                   <button
                     onClick={handleSendImage}

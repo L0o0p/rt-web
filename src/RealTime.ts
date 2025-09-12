@@ -87,9 +87,12 @@ export class RealTime {
 
     /**
      * 发送图像数据
+     * @param imageData 图像二进制数据
+     * @param prompt 可选的提示词
+     * @param protocolId 协议ID，默认为All
      */
-    public sendImageData(imageData: Uint8Array, protocolId?: ProtocolId): boolean {
-        return this.voiceChatCore.sendImageData(imageData, protocolId);
+    public sendImageData(imageData: Uint8Array, prompt?: string, protocolId?: ProtocolId): boolean {
+        return this.voiceChatCore.sendImageData(imageData, prompt, protocolId);
     }
 }
 

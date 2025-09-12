@@ -601,10 +601,30 @@ export class ClientBinaryMessage {
 
     /**
      * 创建图像数据二进制消息
+     * payload格式: [prompt_length(4bytes)] + [prompt_utf8_bytes] + [image_data]
      */
-    static createImageData(sessionId: string, imageBytes: Uint8Array, protocolId: ProtocolId = ProtocolId.All): ClientBinaryMessage {
+    static createImageData(sessionId: string, imageBytes: Uint8Array, prompt?: string, protocolId: ProtocolId = ProtocolId.All): ClientBinaryMessage {
         const header = new BinaryHeader(sessionId, protocolId, CommandId.ImageData);
-        return new ClientBinaryMessage(header, imageBytes);
+
+        // 构建新的payload格式
+        const promptText = prompt || ""; // 如果没有提示词，使用空字符串
+        const promptBytes = new TextEncoder().encode(promptText);
+        const promptLength = promptBytes.length;
+
+        // 创建payload: [prompt_length(4bytes)] + [prompt_utf8_bytes] + [image_data]
+        const payload = new Uint8Array(4 + promptLength + imageBytes.length);
+
+        // 写入prompt长度 (4字节，小端序)
+        const lengthView = new DataView(payload.buffer, 0, 4);
+        lengthView.setUint32(0, promptLength, true); // true表示小端序
+
+        // 写入prompt UTF-8字节
+        payload.set(promptBytes, 4);
+
+        // 写入图像数据
+        payload.set(imageBytes, 4 + promptLength);
+
+        return new ClientBinaryMessage(header, payload);
     }
 }
 

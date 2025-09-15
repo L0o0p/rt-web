@@ -229,12 +229,14 @@ export class CombinedConnectionManager extends EventEmitter {
 尊重用户隐私，保护个人信息安全
 提供客观、平衡的观点，避免偏见
 鼓励用户独立思考和学习成长`,
-        mcp_server_config: [{
-          "name": "mcp_server",
-          "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp"
-        }
+        mcp_server_config: [
+        //   {
+        //   "name": "mcp_server",
+        //   "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp"
+        // }
         ],
-        enable_search: true,
+        "tools_endpoint":"https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/tools?deviceCode=7211",  
+        enable_search: false,
         signal_only: false,
         asr_language: "zh",
         timezone: "Asia/Shanghai",

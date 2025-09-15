@@ -444,6 +444,8 @@ export const App = () => {
       // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
+        console.log('[type]:', eventName);
+        
         switch (eventName) {
           case 'input_audio_buffer.speech_stopped': {
             // ========== 高精度响应延迟计时开始 ==========

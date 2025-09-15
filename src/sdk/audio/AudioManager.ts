@@ -226,6 +226,11 @@ export class AudioManager extends EventEmitter {
      * 处理已处理的音频数据
      */
     private handleProcessedAudio(audioData: Uint8Array): void {
+        // 检查是否还在处理状态，如果已停止则不处理音频数据
+        if (!this.isProcessing) {
+            return;
+        }
+
         // 音频回环播放
         if (this.moduleConfig.loopback && this.player) {
             this.player.playAudioChunk(audioData);

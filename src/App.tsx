@@ -4,7 +4,7 @@ import { useAtom } from 'jotai'
 import ReactMarkdown from 'react-markdown'
 import styles from './App.module.scss'
 import squadyLogo from './assets/squady.png'
-import { isUserSpeakingAtom, logsAtom, wsConnectedAtom } from './state'
+import { isUserSpeakingAtom, logsAtom, wsConnectedAtom, sessionCreatedAtom } from './state'
 import { LiveAudioVisualizerComponent } from './component/audioVisualizer'
 import { RealTime } from './RealTime'
 import { StatusPoint } from './component/statusPoint'
@@ -109,6 +109,7 @@ export const App = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [imagePrompt, setImagePrompt] = useState<string>(''); // 图像提示词
+  const [isImageInputExpanded, setIsImageInputExpanded] = useState(true); // 图片输入框展开状态
   // 会话状态
   const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
     connected: false,
@@ -436,6 +437,11 @@ export const App = () => {
     }
   }, []);
 
+  // 切换图片输入框展开/折叠状态
+  const toggleImageInputExpanded = useCallback(() => {
+    setIsImageInputExpanded(prev => !prev);
+  }, []);
+
   // // 音频传输控制
   // const startAudioTransmission = () => {
   //   if (transmissionTimerRef.current) return;
@@ -616,6 +622,8 @@ export const App = () => {
             console.log('[TEXT] Text done received:', textDoneEvt.text);
             setFinalTexts(prev => [textDoneEvt.text, ...prev].slice(0, 20));
             setCurrentText('');
+            // 收到服务器消息后折叠图片输入框
+            setIsImageInputExpanded(false);
             break;
           }
 
@@ -731,17 +739,23 @@ export const App = () => {
     }, []);
 
   const [isWsConnected, setIsWsConnected] = useAtom(wsConnectedAtom);
+  const [isSessionCreated, setIsSessionCreated] = useAtom(sessionCreatedAtom);
 
   // 更新会话状态
   const updateSessionStatus = useCallback(() => {
     const voiceChatCore = realTime.current?.getVoiceChatCore();
     if (voiceChatCore) {
-      setSessionStatus({
+      const newStatus = {
         connected: voiceChatCore.isConnected,
         sessionCreated: voiceChatCore.isSessionCreated
-      });
+      };
+      console.log('[DEBUG] 会话状态更新:', newStatus);
+      setSessionStatus(newStatus);
+      setIsSessionCreated(voiceChatCore.isSessionCreated);
+    } else {
+      console.log('[DEBUG] VoiceChatCore 实例不可用');
     }
-  }, []);
+  }, [setIsSessionCreated]);
 
   useEffect(() => {
     const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
@@ -810,96 +824,98 @@ export const App = () => {
           </div>
         </div>
 
-        {/* 会话状态指示器 */}
-        <div className={styles.sessionStatusIndicator}>
-          <div className={styles.statusItem}>
-            <span className={`${styles.statusDot} ${sessionStatus.connected ? styles.connected : styles.disconnected}`}></span>
-            <span>连接状态: {sessionStatus.connected ? '已连接' : '未连接'}</span>
-          </div>
-          <div className={styles.statusItem}>
-            <span className={`${styles.statusDot} ${sessionStatus.sessionCreated ? styles.connected : styles.disconnected}`}></span>
-            <span>会话状态: {sessionStatus.sessionCreated ? '已创建' : '未创建'}</span>
-          </div>
-        </div>
 
         {/* 图像上传区域 */}
         <div className={styles.imageUploadSection}>
-          <input
-            id="imageInput"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={handleImageSelect}
-            style={{ display: 'none' }}
-            disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
-          />
+          {/* 图片输入框切换按钮 */}
+          <button
+            onClick={toggleImageInputExpanded}
+            className={styles.imageInputToggle}
+            title={isImageInputExpanded ? "折叠图片输入" : "展开图片输入"}
+          >
+            {isImageInputExpanded ? "📷 收起图片输入" : "📷 展开图片输入"}
+          </button>
 
-          {!selectedImage ? (
-            <div>
-              {/* 提示词输入框 */}
-              <div className={styles.promptInputContainer}>
-                <textarea
-                  placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
-                  value={imagePrompt}
-                  onChange={(e) => setImagePrompt(e.target.value)}
-                  className={styles.promptInput}
-                  rows={3}
-                  disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
-                />
-              </div>
+          {/* 图片输入框内容 */}
+          <div className={`${styles.imageInputContent} ${isImageInputExpanded ? styles.expanded : styles.collapsed}`}>
+            <input
+              id="imageInput"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImageSelect}
+              style={{ display: 'none' }}
+            // disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+            />
 
-              <label
-                htmlFor="imageInput"
-                className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
-              >
-                📷 选择图片
-              </label>
-              {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
-                <div className={styles.uploadTip}>
-                  请先进行语音对话以建立会话
+            {!selectedImage ? (
+              <div>
+                {/* 提示词输入框 */}
+                <div className={styles.promptInputContainer}>
+                  <textarea
+                    placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
+                    value={imagePrompt}
+                    onChange={(e) => setImagePrompt(e.target.value)}
+                    className={styles.promptInput}
+                    rows={3}
+                  // disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+                  />
                 </div>
-              )}
-            </div>
-          ) : (
-            <div className={styles.imagePreviewContainer}>
-              {imagePreview && (
-                <img
-                  src={imagePreview}
-                  alt="预览"
-                  className={styles.imagePreview}
-                />
-              )}
-              <div className={styles.imageActions}>
-                <span className={styles.imageInfo}>
-                  {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
-                </span>
-                {imagePrompt && (
-                  <div className={styles.promptPreview}>
-                    <strong>提示词:</strong> {imagePrompt}
+
+                <label
+                  htmlFor="imageInput"
+                  className={`${styles.imageUploadButton}`}
+                // className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
+                >
+                  📷 选择图片
+                </label>
+                {/* {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
+                  <div className={styles.uploadTip}>
+                    请先进行语音对话以建立会话
                   </div>
+                )} */}
+              </div>
+            ) : (
+              <div className={styles.imagePreviewContainer}>
+                {imagePreview && (
+                  <img
+                    src={imagePreview}
+                    alt="预览"
+                    className={styles.imagePreview}
+                  />
                 )}
-                {!imagePrompt && (
-                  <div className={styles.promptPreview}>
-                    <em>将使用最后一轮对话内容作为提示</em>
+                <div className={styles.imageActions}>
+                  <span className={styles.imageInfo}>
+                    {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
+                  </span>
+                  {imagePrompt && (
+                    <div className={styles.promptPreview}>
+                      <strong>提示词:</strong> {imagePrompt}
+                    </div>
+                  )}
+                  {!imagePrompt && (
+                    <div className={styles.promptPreview}>
+                      <em>将使用最后一轮对话内容作为提示</em>
+                    </div>
+                  )}
+                  <div className={styles.imageButtons}>
+                    <button
+                      onClick={handleSendImage}
+                      disabled={isImageUploading}
+                      className={styles.sendButton}
+                    >
+                      {isImageUploading ? '发送中...' : '发送图片'}
+                    </button>
+                    <button
+                      onClick={handleCancelImage}
+                      className={styles.cancelButton}
+                    >
+                      取消
+                    </button>
                   </div>
-                )}
-                <div className={styles.imageButtons}>
-                  <button
-                    onClick={handleSendImage}
-                    disabled={isImageUploading}
-                    className={styles.sendButton}
-                  >
-                    {isImageUploading ? '发送中...' : '发送图片'}
-                  </button>
-                  <button
-                    onClick={handleCancelImage}
-                    className={styles.cancelButton}
-                  >
-                    取消
-                  </button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

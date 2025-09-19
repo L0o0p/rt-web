@@ -304,7 +304,19 @@ export const App = () => {
       // console.debug("[APP] Stopping VAD processing");
 
       try {
-        // 停止并禁用AudioManager
+        // 获取VoiceChatCore实例
+        const voiceChatCore = realTime.current?.getVoiceChatCore();
+
+        // 1. 发送StopInput指令到服务器，告知停止音频输入
+        if (voiceChatCore && voiceChatCore.isConnected && voiceChatCore.currentSessionId) {
+          const connectionManager = voiceChatCore.getConnectionManager();
+          const { ClientBinaryMessage } = await import('./sdk/protocol/ClientProtocol');
+          const stopInputMessage = ClientBinaryMessage.createStopInput(voiceChatCore.currentSessionId);
+          connectionManager.sendBinaryMessage(stopInputMessage);
+          console.log('[APP] StopInput command sent to server');
+        }
+
+        // 2. 停止并禁用AudioManager，停止音频采集和发送
         await audioManagerRef.current
           .stop()
           .then(manager => manager.configure({ enabled: false }));
@@ -315,8 +327,8 @@ export const App = () => {
         setSpeechDetected(false);
         setSpeechSegmentCount(0);
 
-      } catch {
-        // suppressed
+      } catch (error) {
+        console.error('[APP] Error stopping VAD processing:', error);
       }
     }
   }, [isUserSpeaking, vadThreshold, setIsUserSpeaking]);
@@ -554,6 +566,8 @@ export const App = () => {
       // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
+        console.log('[type]:', eventName);
+
         switch (eventName) {
           case 'input_audio_buffer.speech_stopped': {
             // ========== 高精度响应延迟计时开始 ==========
@@ -716,7 +730,7 @@ export const App = () => {
       return styles.poor;
     }, []);
 
-  const [, setIsWsConnected] = useAtom(wsConnectedAtom);
+  const [isWsConnected, setIsWsConnected] = useAtom(wsConnectedAtom);
 
   // 更新会话状态
   const updateSessionStatus = useCallback(() => {

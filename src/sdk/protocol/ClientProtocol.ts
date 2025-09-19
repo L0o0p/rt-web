@@ -139,6 +139,7 @@ export interface SessionConfigPayload {
     min_speech_duration_ms?: number;
     system_prompt?: string;
     mcp_server_config?: Record<string, unknown> | Record<string, unknown>[];
+    tools_endpoint?: string;
     tools?: Record<string, unknown>[];
     tool_choice?: string | Record<string, unknown>;
     enable_search?: boolean;

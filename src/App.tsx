@@ -110,6 +110,7 @@ export const App = () => {
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [imagePrompt, setImagePrompt] = useState<string>(''); // 图像提示词
   const [isImageInputExpanded, setIsImageInputExpanded] = useState(true); // 图片输入框展开状态
+  const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(true); // 图片上传区域展开状态
   // 会话状态
   const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
     connected: false,
@@ -440,6 +441,11 @@ export const App = () => {
   // 切换图片输入框展开/折叠状态
   const toggleImageInputExpanded = useCallback(() => {
     setIsImageInputExpanded(prev => !prev);
+  }, []);
+
+  // 切换图片上传区域和响应文本显示区域的展开状态
+  const toggleSecondarySections = useCallback(() => {
+    setIsImageUploadSectionExpanded(prev => !prev);
   }, []);
 
   // // 音频传输控制
@@ -807,6 +813,72 @@ export const App = () => {
   return (
     <div className={styles.container}>
       <div className={styles.mainSection}>
+        {/* 实时响应速度监控显示 */}
+        <div className={`${styles.performanceMonitor} ${isPerformanceMonitorVisible ? styles.visible : styles.hidden}`}>
+          <div className={styles.performanceHeader}>
+            <h4>实时响应监控</h4>
+            <div className={styles.headerButtons}>
+              <button
+                className={`${styles.toggleButton} ${isPerformanceMonitorEnabled ? styles.enabled : styles.disabled}`}
+                onClick={togglePerformanceMonitor}
+                title={isPerformanceMonitorEnabled ? "关闭性能监控" : "开启性能监控"}
+                type="button"
+              >
+                {isPerformanceMonitorEnabled ? "⏸" : "▶"}
+              </button>
+              <button
+                className={styles.toggleButton}
+                onClick={togglePerformanceVisibility}
+                title="展开/收起"
+                type="button"
+              >
+                {isPerformanceMonitorVisible ? '−' : '+'}
+              </button>
+            </div>
+          </div>
+
+          {isPerformanceMonitorVisible && (
+            <div className={styles.performanceContent}>
+              <div className={styles.metricsGrid}>
+                <div className={styles.metric}>
+                  <span className={styles.metricLabel}>平均音频延迟</span>
+                  <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
+                    {responseMetrics.averageAudioLatency > 0
+                      ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
+                      : '--'}
+                  </span>
+                </div>
+
+                <div className={styles.metric}>
+                  <span className={styles.metricLabel}>最近音频延迟</span>
+                  <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
+                    {responseMetrics.lastAudioLatency > 0
+                      ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
+                      : '--'}
+                  </span>
+                </div>
+                <div className={styles.metric}>
+                  <span className={styles.metricLabel}>对话轮次</span>
+                  <span className={styles.metricValue}>
+                    {responseMetrics.totalInteractions}
+                  </span>
+                </div>
+
+                <div className={styles.metric}>
+                  <span className={styles.metricLabel}>计时精度</span>
+                  <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
+                    {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
+                  </span>
+                </div>
+              </div>
+
+              {/* 响应时间趋势图 */}
+              {responseMetrics.audioResponseTimes.length > 1 && (
+                <TrendChart responseMetrics={responseMetrics} />
+              )}
+            </div>
+          )}
+        </div>
         <div className={styles.squadyUIContainer}>
           <LiveAudioVisualizerComponent pause={!isUserSpeaking} />
           <div
@@ -825,54 +897,56 @@ export const App = () => {
         </div>
 
 
+
+      </div>
+
+      <div className={styles.secondary}>
         {/* 图像上传区域 */}
         <div className={styles.imageUploadSection}>
-          {/* 图片输入框切换按钮 */}
+          {/* 切换按钮 */}
           <button
-            onClick={toggleImageInputExpanded}
-            className={styles.imageInputToggle}
-            title={isImageInputExpanded ? "折叠图片输入" : "展开图片输入"}
+            onClick={toggleSecondarySections}
+            className={styles.sectionToggle}
+            title={isImageUploadSectionExpanded ? "切换到响应显示" : "切换到图片上传"}
           >
-            {isImageInputExpanded ? "📷 收起图片输入" : "📷 展开图片输入"}
+            {isImageUploadSectionExpanded ? "✉️" : "📷"}
+
           </button>
 
           {/* 图片输入框内容 */}
-          <div className={`${styles.imageInputContent} ${isImageInputExpanded ? styles.expanded : styles.collapsed}`}>
+          <div className={`${styles.imageInputContent} ${isImageUploadSectionExpanded ? styles.expanded : styles.collapsed}`}>
+            {/* 图片输入框切换按钮 */}
+            {/* <button
+              onClick={toggleImageInputExpanded}
+              className={styles.imageInputToggle}
+              title={isImageInputExpanded ? "折叠图片输入" : "展开图片输入"}
+            >
+              {isImageInputExpanded ? "▲" : "▼"}
+            </button> */}
+
             <input
               id="imageInput"
               type="file"
               accept="image/jpeg,image/png,image/webp"
               onChange={handleImageSelect}
               style={{ display: 'none' }}
-            // disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+              disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
             />
 
             {!selectedImage ? (
-              <div>
-                {/* 提示词输入框 */}
-                <div className={styles.promptInputContainer}>
-                  <textarea
-                    placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
-                    value={imagePrompt}
-                    onChange={(e) => setImagePrompt(e.target.value)}
-                    className={styles.promptInput}
-                    rows={3}
-                  // disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
-                  />
-                </div>
-
+              <div className={styles.imgLabelContainer}>
                 <label
                   htmlFor="imageInput"
-                  className={`${styles.imageUploadButton}`}
-                // className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
+                  className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
                 >
                   📷 选择图片
                 </label>
-                {/* {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
+
+                {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
                   <div className={styles.uploadTip}>
                     请先进行语音对话以建立会话
                   </div>
-                )} */}
+                )}
               </div>
             ) : (
               <div className={styles.imagePreviewContainer}>
@@ -883,122 +957,61 @@ export const App = () => {
                     className={styles.imagePreview}
                   />
                 )}
-                <div className={styles.imageActions}>
-                  <span className={styles.imageInfo}>
-                    {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
-                  </span>
-                  {imagePrompt && (
-                    <div className={styles.promptPreview}>
-                      <strong>提示词:</strong> {imagePrompt}
+
+                {/* 提示词输入框 - 只在选择图片后显示 */}
+                <div className={styles.promptInputContainer}>
+                  <textarea
+                    placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
+                    value={imagePrompt}
+                    onChange={(e) => setImagePrompt(e.target.value)}
+                    className={styles.promptInput}
+                    rows={3}
+                    disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
+                  />
+                  <div className={styles.imageActions}>
+                    <span className={styles.imageInfo}>
+                      {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
+
+                    <div className={styles.imageButtons}>
+                      <button
+                        onClick={handleSendImage}
+                        disabled={isImageUploading}
+                        className={styles.sendButton}
+                      >
+                        {isImageUploading ? '发送中...' : '发送图片'}
+                      </button>
+                      <button
+                        onClick={handleCancelImage}
+                        className={styles.cancelButton}
+                      >
+                        取消
+                      </button>
                     </div>
-                  )}
-                  {!imagePrompt && (
-                    <div className={styles.promptPreview}>
-                      <em>将使用最后一轮对话内容作为提示</em>
-                    </div>
-                  )}
-                  <div className={styles.imageButtons}>
-                    <button
-                      onClick={handleSendImage}
-                      disabled={isImageUploading}
-                      className={styles.sendButton}
-                    >
-                      {isImageUploading ? '发送中...' : '发送图片'}
-                    </button>
-                    <button
-                      onClick={handleCancelImage}
-                      className={styles.cancelButton}
-                    >
-                      取消
-                    </button>
                   </div>
                 </div>
+
+
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* 实时响应速度监控显示 */}
-      <div className={`${styles.performanceMonitor} ${isPerformanceMonitorVisible ? styles.visible : styles.hidden}`}>
-        <div className={styles.performanceHeader}>
-          <h4>实时响应监控</h4>
-          <div className={styles.headerButtons}>
-            <button
-              className={`${styles.toggleButton} ${isPerformanceMonitorEnabled ? styles.enabled : styles.disabled}`}
-              onClick={togglePerformanceMonitor}
-              title={isPerformanceMonitorEnabled ? "关闭性能监控" : "开启性能监控"}
-              type="button"
-            >
-              {isPerformanceMonitorEnabled ? "⏸" : "▶"}
-            </button>
-            <button
-              className={styles.toggleButton}
-              onClick={togglePerformanceVisibility}
-              title="展开/收起"
-              type="button"
-            >
-              {isPerformanceMonitorVisible ? '−' : '+'}
-            </button>
-          </div>
-        </div>
-
-        {isPerformanceMonitorVisible && (
-          <div className={styles.performanceContent}>
-            <div className={styles.metricsGrid}>
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>平均音频延迟</span>
-                <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
-                  {responseMetrics.averageAudioLatency > 0
-                    ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
-                    : '--'}
-                </span>
-              </div>
-
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>最近音频延迟</span>
-                <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
-                  {responseMetrics.lastAudioLatency > 0
-                    ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
-                    : '--'}
-                </span>
-              </div>
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>对话轮次</span>
-                <span className={styles.metricValue}>
-                  {responseMetrics.totalInteractions}
-                </span>
-              </div>
-
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>计时精度</span>
-                <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
-                  {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
-                </span>
-              </div>
+          {/* 服务器文本响应显示区域 */}
+          <div className={`${styles.responseTextDisplay} ${!isImageUploadSectionExpanded ? styles.expanded : styles.collapsed}`}>
+            <div className={styles.responseContentWrapper}>
+              <ReactMarkdown>
+                {currentText || finalTexts[0] || '服务器响应信息'}
+              </ReactMarkdown>
             </div>
-
-            {/* 响应时间趋势图 */}
-            {responseMetrics.audioResponseTimes.length > 1 && (
-              <TrendChart responseMetrics={responseMetrics} />
-            )}
           </div>
-        )}
-      </div>
-
-
-      {/* 服务器文本响应显示区域 */}
-      <div className={styles.responseTextDisplay}>
-        <ReactMarkdown>
-          {currentText || finalTexts[0] || ''}
-        </ReactMarkdown>
+        </div>
       </div>
 
       {/* 视觉功能测试面板 (开发调试用) */}
-      <VisionTestPanel
+      {/* <VisionTestPanel
         realTime={realTime.current}
         sessionStatus={sessionStatus}
-      />
+      /> */}
     </div>
   )
 }

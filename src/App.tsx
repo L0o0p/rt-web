@@ -16,6 +16,7 @@ import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
 import type { VoiceChatCore } from './sdk';
 import { VisionTestPanel } from './components/VisionTestPanel';
+import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 
 // 趋势图组件
 const TrendChart = React.memo(({ responseMetrics }: {
@@ -1012,6 +1013,9 @@ export const App = () => {
         realTime={realTime.current}
         sessionStatus={sessionStatus}
       /> */}
+
+      {/* PWA安装提示 */}
+      <PWAInstallPrompt />
     </div>
   )
 }

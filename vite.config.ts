@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -8,6 +9,55 @@ export default defineConfig({
       // 修复React 19兼容性问题
       jsxRuntime: 'automatic',
       jsxImportSource: 'react'
+    }),
+    VitePWA({
+      registerType: 'autoUpdate',
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm,onnx}'],
+        maximumFileSizeToCacheInBytes: 50 * 1024 * 1024, // 50MB，支持大文件如WASM和ONNX
+        navigateFallback: null, // 禁用导航回退
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365 // 1年
+              }
+            }
+          }
+        ]
+      },
+      manifest: {
+        name: 'Squady RealTime',
+        short_name: 'RealTime',
+        description: 'Squady Real-time Voice Chat Interface',
+        theme_color: '#787CF0',
+        background_color: '#ffffff',
+        display: 'standalone',
+        scope: '/',
+        start_url: '/',
+        icons: [
+          {
+            src: '/squady.png',
+            sizes: '251x250',
+            type: 'image/png'
+          },
+          {
+            src: '/squady.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: '/squady.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable'
+          }
+        ]
+      }
     })
   ],
   optimizeDeps: {

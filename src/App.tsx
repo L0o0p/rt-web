@@ -756,7 +756,7 @@ export const App = () => {
         connected: voiceChatCore.isConnected,
         sessionCreated: voiceChatCore.isSessionCreated
       };
-      console.log('[DEBUG] 会话状态更新:', newStatus);
+      // console.log('[DEBUG] 会话状态更新:', newStatus);
       setSessionStatus(newStatus);
       setIsSessionCreated(voiceChatCore.isSessionCreated);
     } else {

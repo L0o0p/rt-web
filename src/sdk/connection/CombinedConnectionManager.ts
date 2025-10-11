@@ -7,6 +7,18 @@ import {
   BinaryMessageParser,
 } from '../protocol/UnifiedParser';
 import { EventEmitter } from '../utils/EventEmitter';
+
+import {
+  decodeResponseAudioDeltaMessage
+} from '../protocol/BinaryAudioDecoder';
+
+import type {
+  BinaryAudioProtocolConfig,
+  DecodingResult,
+  DecodedAudioDeltaMessage
+} from '../protocol/BinaryAudioTypes';
+
+
 // 解码和播放逻辑应在上层 App 中处理
 
 // 事件类型定义
@@ -44,10 +56,14 @@ export class CombinedConnectionManager extends EventEmitter {
   private maxMetricsHistory = 100; // 保留最近100次测量
 
 
-  constructor(sessionId?: string, defaultSessionConfig?: Partial<SessionConfigPayload>) {
+  constructor(
+    sessionId?: string,
+    defaultSessionConfig?: Partial<SessionConfigPayload>,
+    binaryAudioConfig?: Partial<BinaryAudioProtocolConfig>
+  ) {
     super();
     this.webSocketParser = new WebSocketMessageParser();
-    this.binaryParser = new BinaryMessageParser();
+    this.binaryParser = new BinaryMessageParser(binaryAudioConfig);
     this.defaultSessionConfig = defaultSessionConfig;
     if (sessionId) {
       this.sessionId = sessionId;
@@ -348,7 +364,7 @@ export class CombinedConnectionManager extends EventEmitter {
 
   // === 以下是从原SDKMessageHandler迁移的方法 ===
 
-  private handleMessage(event: MessageEvent): void {
+  private handleMessage(event: MessageEvent): void { 
     try {
       if (typeof event.data === 'string') {
         const parsedMessage = this.webSocketParser.parse(event.data);
@@ -382,20 +398,21 @@ export class CombinedConnectionManager extends EventEmitter {
           logger.error(`[SDK] 处理文本消息时出错: ${error instanceof Error ? error.message : String(error)}`);
         }
       } else {
-        try {
-          const parsedMessage = this.binaryParser.parse(event.data);
-          logger.info(`[SDK] 收到服务器二进制消息，长度: ${event.data.byteLength} 字节`);
-          // 对于二进制消息，我们也采用同样的方式，直接emit事件
-          if (parsedMessage.payload && parsedMessage.payload.type) {
-            // 如果有载荷类型，直接使用载荷类型作为事件类型
-            this.emit(parsedMessage.payload.type, parsedMessage.payload);
-          } else {
-            // 如果没有载荷类型，使用一个通用的事件类型
-            this.emit('binaryMessage', parsedMessage);
-          }
-        } catch (_error) {
-          logger.error(`[SDK] 解析二进制消息时出错: ${_error instanceof Error ? _error.message : String(_error)}`);
+        // 检查二进制消息是否为空
+        const dataSize = event.data instanceof ArrayBuffer ? event.data.byteLength :
+                        event.data instanceof Blob ? event.data.size : 0;
+        
+        if (dataSize === 0) {
+          logger.warn(`[SDK] 收到空的二进制消息，跳过解析`);
+          return;
         }
+        
+        logger.info(`[SDK] 收到服务器二进制消息，长度: ${dataSize} 字节`);
+        
+        // 异步处理二进制音频消息
+        this.handleBinaryAudioMessage(event.data).catch(error => {
+          logger.error(`[SDK] 异步处理二进制音频消息时出错:`, error);
+        });
       }
     } catch (_error) {
       logger.error(`[SDK] 处理WebSocket消息时出错: ${_error instanceof Error ? _error.message : String(_error)}`);
@@ -460,6 +477,24 @@ export class CombinedConnectionManager extends EventEmitter {
   }
 
   /**
+   * 更新二进制音频协议配置
+   * @param config 新的配置选项
+   */
+  public updateBinaryAudioConfig(config: Partial<BinaryAudioProtocolConfig>): void {
+    this.binaryParser.updateBinaryAudioConfig(config);
+    logger.info('[ConnectionManager] 二进制音频配置已更新:', config);
+  }
+
+  /**
+   * 直接解析二进制音频消息
+   * @param buffer 二进制缓冲区
+   * @returns 解码结果
+   */
+  public parseBinaryAudioMessage(buffer: ArrayBuffer): DecodingResult {
+    return this.binaryParser.parseBinaryAudioMessage(buffer);
+  }
+
+  /**
    * 获取性能指标
    */
   public getPerformanceMetrics(): {
@@ -503,6 +538,74 @@ export class CombinedConnectionManager extends EventEmitter {
   public clearPerformanceMetrics(): void {
     this.latencyMetrics = [];
     this.performanceTimers.clear();
+  }
+
+  /**
+   * 处理二进制音频消息
+   * @param buffer 二进制缓冲区
+   */
+  private async handleBinaryAudioMessage(data: ArrayBuffer | Blob): Promise<void> {
+    try {
+      let buffer: ArrayBuffer;
+      
+      // 处理不同类型的二进制数据
+      if (data instanceof ArrayBuffer) {
+        buffer = data;
+        logger.debug(`[SDK] 收到 ArrayBuffer 类型数据，大小: ${buffer.byteLength} 字节`);
+      } else if (data instanceof Blob) {
+        // 将 Blob 转换为 ArrayBuffer
+        buffer = await data.arrayBuffer();
+        logger.debug(`[SDK] 收到 Blob 类型数据，转换后大小: ${buffer.byteLength} 字节`);
+      } else {
+        logger.error(`[SDK] 不支持的数据类型: ${typeof data}`);
+        this.emit('binary_audio_error', {
+          type: 'binary_audio_error',
+          error: `不支持的数据类型: ${typeof data}`,
+          bufferSize: undefined
+        });
+        return;
+      }
+      
+      // 检查缓冲区是否为空
+      if (buffer.byteLength === 0) {
+        logger.warn(`[SDK] 收到空的二进制数据，跳过处理`);
+        return;
+      }
+      
+      logger.debug(`[SDK] 开始处理二进制音频消息，大小: ${buffer.byteLength} 字节`);
+      
+      // 使用新的二进制解码器
+      const decodedAudio: DecodedAudioDeltaMessage = decodeResponseAudioDeltaMessage(buffer);
+      
+      logger.debug(`[SDK] 二进制音频解码成功:`, {
+        responseId: decodedAudio.responseId,
+        itemId: decodedAudio.itemId,
+        outputIndex: decodedAudio.outputIndex,
+        contentIndex: decodedAudio.contentIndex,
+        audioDataSize: decodedAudio.audioData.length
+      });
+
+      // 发射解码后的音频数据事件
+      this.emit('binary_audio_delta', {
+        type: 'binary_audio_delta',
+        responseId: decodedAudio.responseId,
+        itemId: decodedAudio.itemId,
+        outputIndex: decodedAudio.outputIndex,
+        contentIndex: decodedAudio.contentIndex,
+        audioData: decodedAudio.audioData
+      });
+
+    } catch (error) {
+      logger.error(`[SDK] 二进制音频解码失败:`, error);
+      
+      // 发射错误事件
+      this.emit('binary_audio_error', {
+        type: 'binary_audio_error',
+        error: error instanceof Error ? error.message : String(error),
+        bufferSize: data instanceof ArrayBuffer ? data.byteLength :
+                   data instanceof Blob ? data.size : undefined
+      });
+    }
   }
 
 

@@ -109,6 +109,11 @@ export interface AudioChunkPayload {
     data: string; // Base64编码的音频数据
     sample_rate: number;
     channels: number;
+    // 二进制音频协议的额外元数据（可选）
+    responseId?: string;
+    itemId?: string;
+    outputIndex?: number;
+    contentIndex?: number;
 }
 
 export interface TextDataPayload {

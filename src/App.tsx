@@ -15,6 +15,15 @@ import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
 import type { VoiceChatCore } from './sdk';
+
+import {
+  decodeResponseAudioDeltaMessage
+} from './sdk/protocol/BinaryAudioDecoder';
+
+import type {
+  DecodedAudioDeltaMessage
+} from './sdk/protocol/BinaryAudioTypes';
+
 import { VisionTestPanel } from './components/VisionTestPanel';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 
@@ -94,7 +103,10 @@ const downstreamEvents = [
   'response.cancel',
   'response.function_call.delta',
   'response.function_call.done',
-  'response.function_call_result.delta'
+  'response.function_call_result.delta',
+  // 新的二进制音频事件
+  'binary_audio_delta',
+  'binary_audio_error'
 ] as const;
 
 
@@ -236,6 +248,7 @@ export const App = () => {
       return newState;
     });
   }, []);
+
 
   const toggleVadProcessing = useCallback(async () => {
     // console.debug("toggleVadProcessing called, isUserSpeaking:", isUserSpeaking);
@@ -634,21 +647,19 @@ export const App = () => {
             break;
           }
 
-          case 'response.audio.delta': {
-            const audioDeltaEvt = payload as ResponseAudioDeltaEvent;
-            if (!audioDeltaEvt || typeof audioDeltaEvt.delta !== 'string') return;
+          case 'binary_audio_delta': {
+            // 处理新的二进制音频数据
+            const binaryAudioData = payload as any;
+            if (!binaryAudioData || !binaryAudioData.audioData) return;
 
-            // ========== 兼容性响应延迟计算 ==========
-            // 备用计时方式（以防高精度计时器失效）- 只有在性能监控开启时才执行
+            // ========== 响应延迟计算 ==========
+            // 只有在性能监控开启时才执行
             if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
               const audioLatency = performance.now() - speechStartTimeRef.current;
               hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
 
-              console.log(`[DEBUG] 兼容性计时器触发 - 延迟: ${audioLatency.toFixed(2)}ms`);
-              console.log(`[DEBUG] 兼容性计时器 - 不更新对话轮次计数`);
+              console.log(`[DEBUG] 二进制音频响应延迟: ${audioLatency.toFixed(2)}ms`);
 
-              // 注意：只在高精度计时器未工作时才更新状态，避免重复计算对话轮次
-              // 高精度计时器会通过 performance:latency:measured 事件更新状态
               setResponseMetrics(prev => ({
                 ...prev,
                 isTimingActive: false // 确保计时状态正确
@@ -656,17 +667,140 @@ export const App = () => {
             }
 
             try {
-              const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
-              let pcmBytes = audioProcessor.decodeOpus(opusBytes);
-              if (!pcmBytes || pcmBytes.length === 0) {
-                pcmBytes = opusBytes;
+              console.debug('[APP] 收到二进制音频数据:', {
+                dataSize: binaryAudioData.audioData.length,
+                responseId: binaryAudioData.responseId,
+                itemId: binaryAudioData.itemId,
+                outputIndex: binaryAudioData.outputIndex,
+                contentIndex: binaryAudioData.contentIndex
+              });
+              
+              // 二进制音频数据可能需要Opus解码
+              const audioData = binaryAudioData.audioData;
+              
+              // 确保有音频数据
+              if (!audioData || audioData.length === 0) {
+                console.warn('[APP] 没有有效的音频数据，跳过播放');
+                return;
               }
-              if (pcmBytes && pcmBytes.length > 0 && audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
-                // 直接播放当前分片
+
+              // 调试：检查原始音频数据格式
+              console.debug('[APP] 原始音频数据详情:', {
+                dataSize: audioData.length,
+                firstFewBytes: Array.from(audioData.slice(0, 16)),
+                dataType: audioData.constructor.name,
+              });
+
+              let pcmBytes: Uint8Array;
+              
+              // 尝试Opus解码（二进制数据很可能仍然是Opus编码的）
+              try {
+                console.debug('[APP] 尝试对二进制音频数据进行Opus解码...');
+                const decoded = audioProcessor.decodeOpus(audioData);
+                if (decoded) {
+                  pcmBytes = decoded;
+                  console.debug('[APP] 二进制Opus解码成功，PCM数据大小:', pcmBytes.length);
+                } else {
+                  throw new Error('Opus解码返回null');
+                }
+              } catch (opusError) {
+                console.warn('[APP] 二进制Opus解码失败，假设数据已经是PCM格式:', opusError);
+                pcmBytes = audioData;
+              }
+
+              // 调试：检查最终PCM数据格式
+              console.debug('[APP] 最终PCM数据详情:', {
+                dataSize: pcmBytes.length,
+                sampleCount: pcmBytes.length / 2, // PCM16 每个样本2字节
+                firstFewBytes: Array.from(pcmBytes.slice(0, 16)),
+                isEvenLength: pcmBytes.length % 2 === 0
+              });
+
+              // 播放音频数据
+              if (audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
+                console.debug('[APP] 开始播放二进制音频数据:', pcmBytes.length, '字节');
                 audioPlayerRef.current.playAudioChunk(pcmBytes);
+              } else {
+                console.warn('[APP] 音频播放器未就绪:', {
+                  hasPlayer: !!audioPlayerRef.current,
+                  isPlaying: isPlayingDownstreamAudioRef.current
+                });
               }
             } catch (e) {
-              console.error('[APP] Failed to decode/play response.audio.delta:', e);
+              console.error('[APP] 二进制音频处理失败:', e);
+            }
+            break;
+          }
+
+          case 'binary_audio_error': {
+            // 处理二进制音频错误
+            const errorData = payload as any;
+            console.error('[APP] 二进制音频解码错误:', errorData);
+            break;
+          }
+
+          case 'response.audio.delta': {
+            // 保留对传统JSON音频的支持（向后兼容）
+            const audioDeltaEvt = payload as ResponseAudioDeltaEvent;
+            if (!audioDeltaEvt || typeof audioDeltaEvt.delta !== 'string') return;
+
+            // ========== 响应延迟计算 ==========
+            // 只有在性能监控开启时才执行
+            if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
+              const audioLatency = performance.now() - speechStartTimeRef.current;
+              hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
+
+              console.log(`[DEBUG] JSON音频响应延迟: ${audioLatency.toFixed(2)}ms`);
+
+              setResponseMetrics(prev => ({
+                ...prev,
+                isTimingActive: false // 确保计时状态正确
+              }));
+            }
+
+            try {
+              // 直接使用传统的JSON协议处理音频数据
+              const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
+              console.debug('[APP] 收到JSON音频数据:', {
+                dataSize: opusBytes.length,
+                responseId: audioDeltaEvt.response_id,
+                itemId: audioDeltaEvt.item_id
+              });
+              
+              let pcmBytes: Uint8Array;
+              
+              // 尝试Opus解码
+              try {
+                const decoded = audioProcessor.decodeOpus(opusBytes);
+                if (decoded) {
+                  pcmBytes = decoded;
+                  console.debug('[APP] Opus解码成功，PCM数据大小:', pcmBytes.length);
+                } else {
+                  throw new Error('Opus解码返回null');
+                }
+              } catch (opusError) {
+                console.warn('[APP] Opus解码失败，使用原始数据:', opusError);
+                pcmBytes = opusBytes;
+              }
+              
+              // 确保有音频数据
+              if (!pcmBytes || pcmBytes.length === 0) {
+                console.warn('[APP] 没有有效的音频数据，跳过播放');
+                return;
+              }
+
+              // 播放音频数据
+              if (audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
+                console.debug('[APP] 开始播放JSON音频数据:', pcmBytes.length, '字节');
+                audioPlayerRef.current.playAudioChunk(pcmBytes);
+              } else {
+                console.warn('[APP] 音频播放器未就绪:', {
+                  hasPlayer: !!audioPlayerRef.current,
+                  isPlaying: isPlayingDownstreamAudioRef.current
+                });
+              }
+            } catch (e) {
+              console.error('[APP] JSON音频处理失败:', e);
             }
             break;
           }

@@ -45,6 +45,8 @@ export class CombinedConnectionManager extends EventEmitter {
   private binaryParser: BinaryMessageParser;
 
   // ========== 高精度性能监控 ==========
+  // 支持二进制协议优先的延迟计算：binary_audio_delta 事件优先于 response.audio.delta
+  // 延迟计算方式已从 response.audio.delta 改为 binary_audio_delta
   private performanceTimers = new Map<string, number>(); // 存储各种事件的开始时间
   private latencyMetrics: Array<{
     type: string;
@@ -407,6 +409,7 @@ export class CombinedConnectionManager extends EventEmitter {
 
           // ========== 高精度性能监控 - WebSocket层立即停止计时 ==========
           // 在消息解析完成后立即停止对应的计时器
+          // 优先处理 binary_audio_delta 事件，response.audio.delta 作为备用方案
           if (messageType) {
             const latency = this.stopHighPrecisionTimer(messageType);
             if (latency !== null) {
@@ -457,10 +460,13 @@ export class CombinedConnectionManager extends EventEmitter {
 
   /**
    * 开始计时 - 1ms精度
+   * @param eventType 事件类型，支持 'binary_audio_delta'（二进制协议优先）和 'response.audio.delta'（JSON协议备用）
+   * 延迟计算方式已优化为优先使用 binary_audio_delta 事件
    */
   public startHighPrecisionTimer(eventType: string): void {
     const now = performance.now();
     this.performanceTimers.set(eventType, now);
+    console.log(`[DEBUG] 启动高精度计时器: ${eventType} at ${now}`);
 
     // 立即发出计时开始事件
     this.emit('performance:timer:start', {
@@ -471,12 +477,17 @@ export class CombinedConnectionManager extends EventEmitter {
 
   /**
    * 停止计时并记录延迟 - 1ms精度
+   * @param eventType 事件类型，支持 'binary_audio_delta'（二进制协议优先）和 'response.audio.delta'（JSON协议备用）
+   * @returns 延迟时间（毫秒），如果未找到对应的计时器则返回 null
+   * 注意：binary_audio_delta 事件提供更精确的延迟计算
    */
   public stopHighPrecisionTimer(eventType: string): number | null {
     const endTime = performance.now();
     const startTime = this.performanceTimers.get(eventType);
+    console.log(`[DEBUG] 尝试停止计时器: ${eventType}, 开始时间: ${startTime}, 结束时间: ${endTime}`);
 
     if (startTime === undefined) {
+      console.log(`[DEBUG] 计时器 ${eventType} 未找到`);
       return null;
     }
 
@@ -765,7 +776,20 @@ export class CombinedConnectionManager extends EventEmitter {
         audioDataSize: decodedAudio.audioData.length
       });
 
+      // ========== 高精度性能监控 - 二进制音频延迟计算 ==========
+      // 停止 binary_audio_delta 事件的计时器（优先方案）
+      // 这是新的延迟计算方式，替代原有的 response.audio.delta
+      console.log('[DEBUG] 尝试停止 binary_audio_delta 计时器');
+      const latency = this.stopHighPrecisionTimer('binary_audio_delta');
+      if (latency !== null) {
+        logger.info(`[PERF] High-precision latency for binary_audio_delta: ${latency.toFixed(3)}ms`);
+        console.log(`[DEBUG] binary_audio_delta 延迟测量成功: ${latency.toFixed(3)}ms`);
+      } else {
+        console.log('[DEBUG] binary_audio_delta 计时器未找到或已停止');
+      }
+
       // 发射解码后的音频数据事件
+      console.log(`[DEBUG] 发射 binary_audio_delta 事件，响应ID: ${decodedAudio.responseId}`);
       this.emit('binary_audio_delta', {
         type: 'binary_audio_delta',
         responseId: decodedAudio.responseId,

@@ -4,6 +4,8 @@
 
 本文档描述了实时语音对话系统中音频二进制数据的传输格式，帮助TypeScript客户端正确解析和播放接收到的音频数据。
 
+**重要变更**: 延迟计算方式已从 `response.audio.delta` 改为 `binary_audio_delta`，二进制协议提供更精确的延迟测量能力。
+
 ## 二进制消息结构
 
 ### 1. 消息头部 (32字节)
@@ -195,14 +197,15 @@ class WebAudioPlayer {
 ## 事件处理
 
 ### 相关WebSocket事件
-- `response.audio.delta`: 音频增量数据
+- `binary_audio_delta`: 二进制音频增量数据（优先方案）
+- `response.audio.delta`: JSON音频增量数据（备用方案）
 - `response.audio.done`: 音频数据完成
 - `output_audio_buffer.started`: 开始播放
 - `output_audio_buffer.stopped`: 停止播放
 - `output_audio_buffer.cleared`: 缓冲区清空
 
 ### 处理流程
-1. 收到`response.audio.delta`二进制消息
+1. 优先收到`binary_audio_delta`二进制消息（或备用的`response.audio.delta`）
 2. 解析并按content_index排序
 3. 转换PCM数据为Float32
 4. 调度到Web Audio API播放

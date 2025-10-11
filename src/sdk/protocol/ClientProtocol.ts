@@ -252,6 +252,7 @@ export interface ResponseAudioDeltaEvent {
     output_index: number;
     content_index: number;
     delta: string;
+    // 注意：这是传统的JSON音频协议，作为 binary_audio_delta 的备用方案
 }
 
 export interface ResponseAudioDoneEvent {

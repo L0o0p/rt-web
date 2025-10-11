@@ -1,11 +1,14 @@
 /**
  * 二进制音频协议解码器
- * 
+ *
  * 这个文件实现了二进制音频协议的解码功能，包括：
  * - 主要的解码函数 decodeResponseAudioDeltaMessage
  * - 协议头解析
  * - 载荷数据解析
  * - 性能监控和错误处理
+ *
+ * 注意：延迟计算方式已从 response.audio.delta 改为 binary_audio_delta
+ * 二进制协议提供更精确的延迟测量能力
  */
 
 import {
@@ -24,9 +27,10 @@ import type {
 
 /**
  * 解码响应音频增量消息
- * 
+ *
  * 这是主要的解码函数，将二进制 ArrayBuffer 解码为结构化的音频消息
- * 
+ * 支持新的 binary_audio_delta 延迟计算方式
+ *
  * @param buffer - 包含二进制音频消息的 ArrayBuffer
  * @param config - 可选的配置选项
  * @returns 解码后的音频增量消息

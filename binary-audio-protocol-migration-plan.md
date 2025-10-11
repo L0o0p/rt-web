@@ -4,6 +4,8 @@
 
 本文档详细描述了将现有的WebSocket JSON音频协议逐步迁移到二进制协议的计划。新的二进制协议将提供更好的性能和更低的延迟。
 
+**重要变更**: 延迟计算方式已从 `response.audio.delta` 改为 `binary_audio_delta`，二进制协议提供更精确的延迟测量能力。
+
 ## 当前架构分析
 
 ### 现有音频数据流
@@ -42,8 +44,8 @@ graph TD
     E --> F[Web Audio API]
     
     G[配置开关] --> H{协议选择}
-    H -->|二进制协议| B
-    H -->|JSON协议| I[response.audio.delta]
+    H -->|二进制协议(binary_audio_delta)| B
+    H -->|JSON协议(response.audio.delta)| I[response.audio.delta]
     I --> J[Base64 Audio Data]
     J --> K[Opus Decoder]
     K --> L[PCM16 Data]

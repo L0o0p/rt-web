@@ -1,8 +1,10 @@
 /**
  * 二进制音频协议测试入口
- * 
+ *
  * 这个文件提供了一个简单的测试入口，可以在浏览器控制台中运行
  * 来测试二进制音频解码器的功能。
+ *
+ * 注意：测试包含传统的 response.audio.delta 和新的 binary_audio_delta 协议
  */
 
 import {
@@ -51,7 +53,7 @@ async function testAudioAdapter(): Promise<void> {
   
   const adapter = createDefaultAudioAdapter();
   
-  // 测试JSON协议
+  // 测试JSON协议（传统 response.audio.delta）
   const jsonData = JSON.stringify({
     type: "response.audio.delta",
     event_id: "test-123",
@@ -153,12 +155,12 @@ export function testCompatibility(): void {
   
   const adapter = createDefaultAudioAdapter();
   
-  // 测试传统JSON格式
+  // 测试传统JSON格式（response.audio.delta - 备用方案）
   const traditionalJson = {
     type: "response.audio.delta",
     event_id: "test-event",
     response_id: "test-response",
-    item_id: "test-item", 
+    item_id: "test-item",
     output_index: 0,
     content_index: 1,
     delta: "dGVzdC1hdWRpby1kYXRh" // "test-audio-data" in base64
@@ -171,7 +173,7 @@ export function testCompatibility(): void {
     console.error('❌ 传统JSON格式不兼容:', error);
   }
   
-  // 测试新的二进制格式
+  // 测试新的二进制格式（binary_audio_delta - 优先方案）
   const binaryPacket = createMockBinaryPacket({
     responseId: 'binary-test-response',
     itemId: 'binary-test-item'

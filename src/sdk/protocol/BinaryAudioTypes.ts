@@ -1,17 +1,21 @@
 /**
  * 二进制音频协议类型定义
- * 
+ *
  * 这个文件定义了用于二进制音频协议的所有类型，包括：
  * - 解码后的音频消息结构
  * - 解码错误类型
  * - 协议常量
  * - 配置选项
+ *
+ * 注意：延迟计算方式已从 response.audio.delta 改为 binary_audio_delta
+ * 二进制协议提供更精确的延迟测量能力
  */
 
 /**
  * 解码后的音频增量消息
- * 
+ *
  * 包含从二进制数据包中解析出的所有音频相关信息
+ * 这是新的延迟计算方式，替代原有的 response.audio.delta
  */
 export interface DecodedAudioDeltaMessage {
   /** 响应ID，用于标识唯一的响应会话 */
@@ -186,8 +190,9 @@ export const DEFAULT_BINARY_AUDIO_CONFIG: BinaryAudioProtocolConfig = {
 
 /**
  * 性能指标接口
- * 
+ *
  * 用于跟踪二进制协议的性能表现
+ * 包括基于 binary_audio_delta 事件的高精度延迟计算
  */
 export interface BinaryAudioPerformanceMetrics {
   /** 解码操作计数 */

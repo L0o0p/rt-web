@@ -568,7 +568,8 @@ export const App = () => {
           console.log(`[HIGH-PERF] 高精度延迟测量: ${metric.type} = ${metric.latency.toFixed(3)}ms`);
 
           // 更新UI显示 - 只有在性能监控开启时才处理
-          if (metric.type === 'response.audio.delta' && isPerformanceMonitorEnabledRef.current) {
+          // 优先处理 binary_audio_delta 事件，response.audio.delta 作为备用方案
+          if ((metric.type === 'binary_audio_delta' || metric.type === 'response.audio.delta') && isPerformanceMonitorEnabledRef.current) {
             console.log(`[DEBUG] 高精度计时器触发，准备更新计数`);
             setResponseMetrics(prev => {
               console.log(`[DEBUG] 当前对话轮次: ${prev.totalInteractions} -> ${prev.totalInteractions + 1}`);
@@ -598,6 +599,7 @@ export const App = () => {
           case 'input_audio_buffer.speech_stopped': {
             // ========== 高精度响应延迟计时开始 ==========
             // 当收到 input_audio_buffer.speech_stopped 事件时，启动高精度计时器
+            // 优先使用 binary_audio_delta 事件进行延迟计算，response.audio.delta 作为备用
             // 只有在性能监控开启时才进行计时
             if (!isPerformanceMonitorEnabledRef.current) return;
 
@@ -605,9 +607,9 @@ export const App = () => {
             const connectionManager = voiceChatCore?.getConnectionManager();
 
             if (connectionManager) {
-              // 启动高精度计时器 - 针对音频响应
-              connectionManager.startHighPrecisionTimer('response.audio.delta');
-              console.log('[PERF MONITOR] 用户说话结束，高精度计时器已启动 - response.audio.delta');
+              // 启动高精度计时器 - 优先针对二进制音频响应
+              connectionManager.startHighPrecisionTimer('binary_audio_delta');
+              console.log('[PERF MONITOR] 用户说话结束，高精度计时器已启动 - binary_audio_delta (优先)');
             }
 
             // 兼容性：保留原有计时方式
@@ -674,13 +676,14 @@ export const App = () => {
               }
             }
 
-            // ========== 响应延迟计算 ==========
+            // ========== 响应延迟计算（二进制协议优先） ==========
             // 只有在性能监控开启时才执行
+            // binary_audio_delta 事件优先于 response.audio.delta 进行延迟计算
             if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
               const audioLatency = performance.now() - speechStartTimeRef.current;
               hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
 
-              console.log(`[DEBUG] 二进制音频响应延迟: ${audioLatency.toFixed(2)}ms`);
+              console.log(`[DEBUG] 二进制音频响应延迟 (binary_audio_delta): ${audioLatency.toFixed(2)}ms`);
 
               setResponseMetrics(prev => ({
                 ...prev,
@@ -820,16 +823,18 @@ export const App = () => {
 
           case 'response.audio.delta': {
             // 保留对传统JSON音频的支持（向后兼容）
+            // 作为 binary_audio_delta 的备用方案，当二进制协议不可用时使用
             const audioDeltaEvt = payload as ResponseAudioDeltaEvent;
             if (!audioDeltaEvt || typeof audioDeltaEvt.delta !== 'string') return;
 
-            // ========== 响应延迟计算 ==========
+            // ========== 响应延迟计算（JSON协议备用） ==========
             // 只有在性能监控开启时才执行
+            // response.audio.delta 作为备用方案，当 binary_audio_delta 不可用时使用
             if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
               const audioLatency = performance.now() - speechStartTimeRef.current;
               hasRecordedResponse.current = true; // 标记已记录响应，避免重复计算
 
-              console.log(`[DEBUG] JSON音频响应延迟: ${audioLatency.toFixed(2)}ms`);
+              console.log(`[DEBUG] JSON音频响应延迟 (response.audio.delta - 备用方案): ${audioLatency.toFixed(2)}ms`);
 
               setResponseMetrics(prev => ({
                 ...prev,

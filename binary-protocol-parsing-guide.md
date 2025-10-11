@@ -4,9 +4,11 @@
 
 从JSON格式迁移到二进制格式的主要变化：
 
+**重要变更**: 延迟计算方式已从 `response.audio.delta` 改为 `binary_audio_delta`，二进制协议提供更精确的延迟测量能力。
+
 ### 1. 消息格式变化
 
-**之前的JSON格式**:
+**之前的JSON格式** (response.audio.delta - 备用方案):
 ```json
 {
   "type": "response.audio.delta",
@@ -18,7 +20,7 @@
 }
 ```
 
-**现在的二进制格式**:
+**现在的二进制格式** (binary_audio_delta - 优先方案):
 ```
 [32字节头部] + [可变长度载荷]
 ```

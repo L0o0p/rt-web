@@ -652,6 +652,28 @@ export const App = () => {
             const binaryAudioData = payload as any;
             if (!binaryAudioData || !binaryAudioData.audioData) return;
 
+            console.log('[APP] 🎵 收到二进制音频数据，准备播放 - 打断验证日志');
+            
+            // 🔧 修复：增强音频打断检测逻辑
+            if (audioPlayerRef.current) {
+              const queueStatus = audioPlayerRef.current.getQueueStatus();
+              console.log('[APP] 🔴 音频播放器状态检查:', queueStatus);
+              
+              if (queueStatus.isPlaying) {
+                console.log('[APP] 🔴 检测到正在播放音频，执行音频打断');
+                console.log('[APP] 🔴 调用clearQueue清空音频队列');
+                audioPlayerRef.current.clearQueue();
+                
+                // 额外保险：延迟后再次确认清空
+                setTimeout(() => {
+                  if (audioPlayerRef.current && audioPlayerRef.current.isPlaybackActive) {
+                    console.log('[APP] 🔴 延迟检查发现播放器仍然活跃，执行强制重置');
+                    audioPlayerRef.current.forceReset();
+                  }
+                }, 50);
+              }
+            }
+
             // ========== 响应延迟计算 ==========
             // 只有在性能监控开启时才执行
             if (isPerformanceMonitorEnabledRef.current && speechStartTimeRef.current && !hasRecordedResponse.current) {
@@ -685,35 +707,92 @@ export const App = () => {
               }
 
               // 调试：检查原始音频数据格式
-              console.debug('[APP] 原始音频数据详情:', {
+              const audioSlice = Array.from(audioData.slice(0, 16)) as number[];
+              const audioSlice100 = Array.from(audioData.slice(0, 100)) as number[];
+              console.debug('[APP] 🔍 原始音频数据详情:', {
                 dataSize: audioData.length,
-                firstFewBytes: Array.from(audioData.slice(0, 16)),
+                firstFewBytes: audioSlice,
+                firstFewBytesHex: audioSlice.map(b => b.toString(16).padStart(2, '0')).join(' '),
                 dataType: audioData.constructor.name,
+                // 检查是否可能是Opus数据的特征
+                possibleOpusSignature: (Array.from(audioData.slice(0, 8)) as number[]).map((b: number) => b.toString(16).padStart(2, '0')).join(' '),
+                // 检查是否可能是PCM数据的特征（查看值范围）
+                minByteValue: Math.min(...audioSlice100),
+                maxByteValue: Math.max(...audioSlice100),
+                avgByteValue: audioSlice100.reduce((a: number, b: number) => a + b, 0) / 100
               });
 
               let pcmBytes: Uint8Array;
+              let decodingMethod = '';
               
               // 尝试Opus解码（二进制数据很可能仍然是Opus编码的）
               try {
-                console.debug('[APP] 尝试对二进制音频数据进行Opus解码...');
+                console.debug('[APP] 🎵 尝试对二进制音频数据进行Opus解码...');
                 const decoded = audioProcessor.decodeOpus(audioData);
                 if (decoded) {
                   pcmBytes = decoded;
-                  console.debug('[APP] 二进制Opus解码成功，PCM数据大小:', pcmBytes.length);
+                  decodingMethod = 'opus_decoded';
+                  console.debug('[APP] ✅ 二进制Opus解码成功，PCM数据大小:', pcmBytes.length);
+                  
+                  // 验证解码后的PCM数据特征
+                  if (pcmBytes.length > 0) {
+                    const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                    const firstSample = dataView.getInt16(0, true); // 小端序
+                    const secondSample = dataView.getInt16(2, true); // 小端序
+                    console.debug('[APP] 🔊 解码后PCM样本值 (小端序):', {
+                      firstSample,
+                      secondSample,
+                      firstSampleBigEndian: dataView.getInt16(0, false), // 大端序
+                      secondSampleBigEndian: dataView.getInt16(2, false) // 大端序
+                    });
+                  }
                 } else {
                   throw new Error('Opus解码返回null');
                 }
               } catch (opusError) {
-                console.warn('[APP] 二进制Opus解码失败，假设数据已经是PCM格式:', opusError);
+                console.warn('[APP] ❌ 二进制Opus解码失败，假设数据已经是PCM格式:', opusError);
                 pcmBytes = audioData;
+                decodingMethod = 'direct_pcm';
+                
+                // 验证直接作为PCM的数据特征
+                if (pcmBytes.length >= 4) {
+                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                  const firstSampleLE = dataView.getInt16(0, true); // 小端序
+                  const firstSampleBE = dataView.getInt16(0, false); // 大端序
+                  console.debug('[APP] 🔊 直接PCM样本值对比:', {
+                    firstSampleLittleEndian: firstSampleLE,
+                    firstSampleBigEndian: firstSampleBE,
+                    sampleDifference: Math.abs(firstSampleLE - firstSampleBE),
+                    isLittleEndianReasonable: Math.abs(firstSampleLE) < 32768 && Math.abs(firstSampleLE) > 100,
+                    isBigEndianReasonable: Math.abs(firstSampleBE) < 32768 && Math.abs(firstSampleBE) > 100
+                  });
+                }
               }
 
               // 调试：检查最终PCM数据格式
-              console.debug('[APP] 最终PCM数据详情:', {
+              console.debug('[APP] 📊 最终PCM数据详情:', {
                 dataSize: pcmBytes.length,
                 sampleCount: pcmBytes.length / 2, // PCM16 每个样本2字节
                 firstFewBytes: Array.from(pcmBytes.slice(0, 16)),
-                isEvenLength: pcmBytes.length % 2 === 0
+                firstFewBytesHex: (Array.from(pcmBytes.slice(0, 16)) as number[]).map(b => b.toString(16).padStart(2, '0')).join(' '),
+                isEvenLength: pcmBytes.length % 2 === 0,
+                decodingMethod,
+                // 音频数据质量检查
+                audioQualityCheck: pcmBytes.length >= 4 ? (() => {
+                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                  const samples = [];
+                  for (let i = 0; i < Math.min(10, pcmBytes.length / 2); i++) {
+                    samples.push(dataView.getInt16(i * 2, true)); // 小端序
+                  }
+                  const maxSample = Math.max(...samples.map(Math.abs));
+                  const avgSample = samples.reduce((a, b) => a + Math.abs(b), 0) / samples.length;
+                  return {
+                    maxAbsSample: maxSample,
+                    avgAbsSample: avgSample,
+                    isReasonableRange: maxSample <= 32767 && avgSample > 10,
+                    sampleValues: samples.slice(0, 5)
+                  };
+                })() : null
               });
 
               // 播放音频数据
@@ -761,27 +840,96 @@ export const App = () => {
             try {
               // 直接使用传统的JSON协议处理音频数据
               const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
-              console.debug('[APP] 收到JSON音频数据:', {
+              
+              // 调试：检查JSON协议的原始音频数据格式
+              const opusSlice = Array.from(opusBytes.slice(0, 16)) as number[];
+              const opusSlice100 = Array.from(opusBytes.slice(0, 100)) as number[];
+              console.debug('[APP] 🔍 JSON协议音频数据详情:', {
                 dataSize: opusBytes.length,
                 responseId: audioDeltaEvt.response_id,
-                itemId: audioDeltaEvt.item_id
+                itemId: audioDeltaEvt.item_id,
+                firstFewBytes: opusSlice,
+                firstFewBytesHex: opusSlice.map(b => b.toString(16).padStart(2, '0')).join(' '),
+                // 检查是否可能是Opus数据的特征
+                possibleOpusSignature: (Array.from(opusBytes.slice(0, 8)) as number[]).map((b: number) => b.toString(16).padStart(2, '0')).join(' '),
+                // 检查是否可能是PCM数据的特征（查看值范围）
+                minByteValue: Math.min(...opusSlice100),
+                maxByteValue: Math.max(...opusSlice100),
+                avgByteValue: opusSlice100.reduce((a: number, b: number) => a + b, 0) / 100
               });
               
               let pcmBytes: Uint8Array;
+              let decodingMethod = '';
               
               // 尝试Opus解码
               try {
+                console.debug('[APP] 🎵 尝试对JSON音频数据进行Opus解码...');
                 const decoded = audioProcessor.decodeOpus(opusBytes);
                 if (decoded) {
                   pcmBytes = decoded;
-                  console.debug('[APP] Opus解码成功，PCM数据大小:', pcmBytes.length);
+                  decodingMethod = 'opus_decoded';
+                  console.debug('[APP] ✅ JSON Opus解码成功，PCM数据大小:', pcmBytes.length);
+                  
+                  // 验证解码后的PCM数据特征
+                  if (pcmBytes.length > 0) {
+                    const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                    const firstSample = dataView.getInt16(0, true); // 小端序
+                    const secondSample = dataView.getInt16(2, true); // 小端序
+                    console.debug('[APP] 🔊 JSON解码后PCM样本值 (小端序):', {
+                      firstSample,
+                      secondSample,
+                      firstSampleBigEndian: dataView.getInt16(0, false), // 大端序
+                      secondSampleBigEndian: dataView.getInt16(2, false) // 大端序
+                    });
+                  }
                 } else {
                   throw new Error('Opus解码返回null');
                 }
               } catch (opusError) {
-                console.warn('[APP] Opus解码失败，使用原始数据:', opusError);
+                console.warn('[APP] ❌ JSON Opus解码失败，使用原始数据:', opusError);
                 pcmBytes = opusBytes;
+                decodingMethod = 'direct_pcm';
+                
+                // 验证直接作为PCM的数据特征
+                if (pcmBytes.length >= 4) {
+                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                  const firstSampleLE = dataView.getInt16(0, true); // 小端序
+                  const firstSampleBE = dataView.getInt16(0, false); // 大端序
+                  console.debug('[APP] 🔊 JSON直接PCM样本值对比:', {
+                    firstSampleLittleEndian: firstSampleLE,
+                    firstSampleBigEndian: firstSampleBE,
+                    sampleDifference: Math.abs(firstSampleLE - firstSampleBE),
+                    isLittleEndianReasonable: Math.abs(firstSampleLE) < 32768 && Math.abs(firstSampleLE) > 100,
+                    isBigEndianReasonable: Math.abs(firstSampleBE) < 32768 && Math.abs(firstSampleBE) > 100
+                  });
+                }
               }
+
+              // 调试：检查JSON协议最终PCM数据格式
+              console.debug('[APP] 📊 JSON最终PCM数据详情:', {
+                dataSize: pcmBytes.length,
+                sampleCount: pcmBytes.length / 2, // PCM16 每个样本2字节
+                firstFewBytes: Array.from(pcmBytes.slice(0, 16)),
+                firstFewBytesHex: (Array.from(pcmBytes.slice(0, 16)) as number[]).map(b => b.toString(16).padStart(2, '0')).join(' '),
+                isEvenLength: pcmBytes.length % 2 === 0,
+                decodingMethod,
+                // 音频数据质量检查
+                audioQualityCheck: pcmBytes.length >= 4 ? (() => {
+                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                  const samples = [];
+                  for (let i = 0; i < Math.min(10, pcmBytes.length / 2); i++) {
+                    samples.push(dataView.getInt16(i * 2, true)); // 小端序
+                  }
+                  const maxSample = Math.max(...samples.map(Math.abs));
+                  const avgSample = samples.reduce((a, b) => a + Math.abs(b), 0) / samples.length;
+                  return {
+                    maxAbsSample: maxSample,
+                    avgAbsSample: avgSample,
+                    isReasonableRange: maxSample <= 32767 && avgSample > 10,
+                    sampleValues: samples.slice(0, 5)
+                  };
+                })() : null
+              });
               
               // 确保有音频数据
               if (!pcmBytes || pcmBytes.length === 0) {
@@ -807,15 +955,94 @@ export const App = () => {
 
           // 删除 started/stopped 的本地缓冲管理，保持最小化
 
+          case 'output_audio_buffer.started': {
+            const now = performance.now();
+            const startedPayload = payload as any;
+            console.log('[APP] 🟢 信令时序诊断 - output_audio_buffer.started:', {
+              timestamp: now,
+              hasExistingPlayer: !!audioPlayerRef.current,
+              playerStatus: audioPlayerRef.current?.getQueueStatus(),
+              sessionId: startedPayload.session_id,
+              item_id: startedPayload.item_id
+            });
+            
+            // 确保AudioPlayer实例已准备好
+            if (!audioPlayerRef.current) {
+              audioPlayerRef.current = new AudioPlayer();
+              console.log('[APP] 🟢 为新的音频缓冲区创建了新的AudioPlayer实例');
+            } else {
+              // 🔍 诊断：检查是否存在音频流重叠
+              const queueStatus = audioPlayerRef.current.getQueueStatus();
+              const potentialOverlap = queueStatus.isPlaying && (now - queueStatus.lastClearTime) < 50;
+              
+              console.log('[APP] 🔍 音频流重叠检测:', {
+                isPlaying: queueStatus.isPlaying,
+                timeSinceLastClear: now - queueStatus.lastClearTime,
+                clearCount: queueStatus.clearCount,
+                potentialOverlap,
+                action: potentialOverlap ? 'force_reset' : 'clear_queue'
+              });
+              
+              if (potentialOverlap) {
+                // 如果检测到重叠，使用强制重置
+                audioPlayerRef.current.forceReset();
+                console.log('[APP] 🔴 检测到音频流重叠，执行强制重置');
+              } else {
+                // 清理之前的播放状态，准备新的音频流
+                audioPlayerRef.current.clearQueue();
+                console.log('[APP] 🟢 清理现有AudioPlayer状态，准备新的音频流');
+              }
+            }
+            break;
+          }
+
           case 'response.audio.done':
           case 'output_audio_buffer.stopped': {
-            // 无需冲刷，本地不再累积
+            const now = performance.now();
+            const stoppedPayload = payload as any;
+            console.log('[APP] 🔴 信令时序诊断 - output_audio_buffer.stopped:', {
+              timestamp: now,
+              hasExistingPlayer: !!audioPlayerRef.current,
+              playerStatus: audioPlayerRef.current?.getQueueStatus(),
+              sessionId: stoppedPayload.session_id,
+              item_id: stoppedPayload.item_id
+            });
+            
+            // 正确的停止处理：调用stopPlayback()并清理AudioPlayer实例
+            if (audioPlayerRef.current) {
+              console.log('[APP] 🔴 调用stopPlayback()停止音频播放');
+              audioPlayerRef.current.stopPlayback();
+              audioPlayerRef.current = null;
+              console.log('[APP] 🔴 AudioPlayer实例已清理');
+            } else {
+              console.log('[APP] 🔴 AudioPlayer实例已为空，无需清理');
+            }
+            break;
+          }
+
+          // 🔧 修复：这些事件现在由正确的 output_audio_buffer.started/stopped 机制处理
+          // 保留日志记录但移除错误的打断逻辑
+          case 'response.cancel': {
+            console.log('[APP] 📝 收到response.cancel事件（已由正确的信令机制处理）');
+            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
+            break;
+          }
+
+          case 'output_audio_buffer.cleared': {
+            console.log('[APP] 📝 收到output_audio_buffer.cleared事件（已由正确的信令机制处理）');
+            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
+            break;
+          }
+
+          case 'conversation.item.truncated': {
+            console.log('[APP] 📝 收到conversation.item.truncated事件（已由正确的信令机制处理）');
+            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
             break;
           }
 
           default: {
             // 通用事件监听，用于调试
-            if (eventName.includes('text') || eventName.includes('response.created')) {
+            if (eventName.includes('text') || eventName.includes('response.created') || eventName.includes('cancel') || eventName.includes('cleared') || eventName.includes('truncated')) {
               console.log('[DEBUG] Event received:', eventName, payload);
             }
             // 其他事件默认记录（保持可观察性）

@@ -364,9 +364,10 @@ export class CombinedConnectionManager extends EventEmitter {
 
   // === 以下是从原SDKMessageHandler迁移的方法 ===
 
-  private handleMessage(event: MessageEvent): void { 
+  private handleMessage(event: MessageEvent): void {
     try {
       if (typeof event.data === 'string') {
+        // 处理JSON消息（包括控制事件）
         const parsedMessage = this.webSocketParser.parse(event.data);
         logger.info(`[SDK] 收到服务器文本消息: ${JSON.stringify(parsedMessage.rawData)}`);
 
@@ -378,6 +379,30 @@ export class CombinedConnectionManager extends EventEmitter {
             actualMessage = rawData.payload;
             messageType = rawData.payload.type;
             actualMessage.session_id = rawData.session_id;
+          }
+
+          // 🔧 修复：检查是否收到正确的音频缓冲区信令事件
+          if (messageType && [
+            'output_audio_buffer.started',
+            'output_audio_buffer.stopped',
+            'response.cancel',
+            'output_audio_buffer.cleared',
+            'conversation.item.truncated'
+          ].includes(messageType)) {
+            
+            if (['output_audio_buffer.started', 'output_audio_buffer.stopped'].includes(messageType)) {
+              console.log(`[SDK] 🟢 收到正确的音频缓冲区信令: ${messageType}`);
+              console.log(`[SDK] 🟢 信令详情:`, actualMessage);
+              console.log(`[SDK] 🟢 信令时间戳:`, new Date().toISOString());
+            } else {
+              console.log(`[SDK] 📝 收到其他控制事件: ${messageType}`);
+              console.log(`[SDK] 📝 事件详情:`, actualMessage);
+            }
+            
+            console.log(`[SDK] 📤 即将emit事件: ${messageType}`);
+            this.emit(messageType, actualMessage);
+            console.log(`[SDK] ✅ 事件已emit，等待App层处理`);
+            // 移除return语句，确保正常消息处理流程继续
           }
 
           // ========== 高精度性能监控 - WebSocket层立即停止计时 ==========
@@ -398,7 +423,7 @@ export class CombinedConnectionManager extends EventEmitter {
           logger.error(`[SDK] 处理文本消息时出错: ${error instanceof Error ? error.message : String(error)}`);
         }
       } else {
-        // 检查二进制消息是否为空
+        // 处理二进制消息（可能是混合协议）
         const dataSize = event.data instanceof ArrayBuffer ? event.data.byteLength :
                         event.data instanceof Blob ? event.data.size : 0;
         
@@ -407,11 +432,17 @@ export class CombinedConnectionManager extends EventEmitter {
           return;
         }
         
-        logger.info(`[SDK] 收到服务器二进制消息，长度: ${dataSize} 字节`);
+        console.log(`[SDK] 🔍 收到二进制消息，长度: ${dataSize} 字节 - 开始混合协议处理`);
         
-        // 异步处理二进制音频消息
-        this.handleBinaryAudioMessage(event.data).catch(error => {
-          logger.error(`[SDK] 异步处理二进制音频消息时出错:`, error);
+        // 🔧 修复：支持混合协议处理
+        // 尝试解析是否为混合协议消息（包含控制事件 + 二进制音频数据）
+        this.handleMixedProtocolMessage(event.data).catch(error => {
+          logger.error(`[SDK] 混合协议处理失败，回退到纯二进制音频处理:`, error);
+          
+          // 回退到原有的二进制音频处理
+          this.handleBinaryAudioMessage(event.data).catch(fallbackError => {
+            logger.error(`[SDK] 回退处理二进制音频消息时出错:`, fallbackError);
+          });
         });
       }
     } catch (_error) {
@@ -538,6 +569,155 @@ export class CombinedConnectionManager extends EventEmitter {
   public clearPerformanceMetrics(): void {
     this.latencyMetrics = [];
     this.performanceTimers.clear();
+  }
+
+  /**
+   * 处理混合协议消息
+   * 支持同时包含控制事件和二进制音频数据的消息
+   * @param data 二进制数据
+   */
+  private async handleMixedProtocolMessage(data: ArrayBuffer | Blob): Promise<void> {
+    try {
+      let buffer: ArrayBuffer;
+      
+      // 处理不同类型的二进制数据
+      if (data instanceof ArrayBuffer) {
+        buffer = data;
+      } else if (data instanceof Blob) {
+        buffer = await data.arrayBuffer();
+      } else {
+        throw new Error(`不支持的数据类型: ${typeof data}`);
+      }
+      
+      // 检查缓冲区是否为空
+      if (buffer.byteLength === 0) {
+        logger.warn(`[SDK] 收到空的混合协议数据，跳过处理`);
+        return;
+      }
+      
+      logger.debug(`[SDK] 开始处理混合协议消息，大小: ${buffer.byteLength} 字节`);
+      
+      // 尝试解析混合协议消息
+      // 策略1：检查是否包含JSON控制事件前缀
+      const uint8Array = new Uint8Array(buffer);
+      
+      // 检查是否以JSON开始（控制事件可能以JSON格式发送）
+      if (uint8Array.length > 0 && uint8Array[0] === 123) { // 123 = '{' 的ASCII码
+        logger.debug(`[SDK] 检测到可能的JSON控制事件，尝试解析`);
+        
+        try {
+          // 尝试解析JSON部分
+          const jsonText = new TextDecoder().decode(uint8Array);
+          const jsonData = JSON.parse(jsonText);
+          
+          logger.info(`[SDK] 成功解析JSON控制事件:`, jsonData);
+          
+          // 检查是否是控制事件
+          const messageType = jsonData.type || jsonData.payload?.type;
+          if (messageType && [
+            'output_audio_buffer.started',
+            'output_audio_buffer.stopped',
+            'response.cancel',
+            'output_audio_buffer.cleared',
+            'conversation.item.truncated'
+          ].includes(messageType)) {
+            
+            if (['output_audio_buffer.started', 'output_audio_buffer.stopped'].includes(messageType)) {
+              console.log(`[SDK] 🟢 混合协议中发现正确的音频缓冲区信令: ${messageType}`);
+              console.log(`[SDK] 🟢 信令详情:`, jsonData);
+            } else {
+              console.log(`[SDK] 📝 混合协议中发现其他控制事件: ${messageType}`);
+              console.log(`[SDK] 📝 控制事件详情:`, jsonData);
+            }
+            
+            // 处理控制事件
+            let actualMessage = jsonData;
+            if (!messageType && jsonData.payload && jsonData.payload.type) {
+              actualMessage = jsonData.payload;
+              actualMessage.session_id = jsonData.session_id;
+            }
+            
+            // ========== 高精度性能监控 ==========
+            const latency = this.stopHighPrecisionTimer(messageType);
+            if (latency !== null) {
+              logger.info(`[PERF] High-precision latency for ${messageType}: ${latency.toFixed(3)}ms`);
+            }
+            
+            // 发射控制事件
+            this.emit(messageType, actualMessage);
+            logger.info(`[SDK] 混合协议控制事件已发射: ${messageType}`);
+            return;
+          }
+        } catch (jsonError) {
+          logger.debug(`[SDK] JSON解析失败，继续尝试其他解析方式:`, jsonError);
+        }
+      }
+      
+      // 策略2：检查是否包含嵌入的控制事件标记
+      // 某些协议可能在二进制数据中嵌入控制事件标记
+      if (uint8Array.length >= 8) {
+        // 检查控制事件标记（假设有特殊标记）
+        const controlMarker = new DataView(uint8Array.buffer).getUint32(0, true); // 小端序
+        if (controlMarker === 0x43414E43) { // "CANC" 标记
+          logger.info(`[SDK] 检测到嵌入的控制事件标记`);
+          
+          // 提取控制事件数据
+          const controlDataLength = new DataView(uint8Array.buffer).getUint32(4, true);
+          if (uint8Array.length >= 8 + controlDataLength) {
+            const controlData = uint8Array.slice(8, 8 + controlDataLength);
+            const controlText = new TextDecoder().decode(controlData);
+            
+            try {
+              const controlEvent = JSON.parse(controlText);
+              const messageType = controlEvent.type;
+              
+              if (messageType && [
+                'output_audio_buffer.started',
+                'output_audio_buffer.stopped',
+                'response.cancel',
+                'output_audio_buffer.cleared',
+                'conversation.item.truncated'
+              ].includes(messageType)) {
+                
+                if (['output_audio_buffer.started', 'output_audio_buffer.stopped'].includes(messageType)) {
+                  console.log(`[SDK] 🟢 嵌入式音频缓冲区信令: ${messageType}`);
+                } else {
+                  console.log(`[SDK] 📝 嵌入式其他控制事件: ${messageType}`);
+                }
+                
+                // ========== 高精度性能监控 ==========
+                const latency = this.stopHighPrecisionTimer(messageType);
+                if (latency !== null) {
+                  logger.info(`[PERF] High-precision latency for ${messageType}: ${latency.toFixed(3)}ms`);
+                }
+                
+                // 发射控制事件
+                this.emit(messageType, controlEvent);
+                logger.info(`[SDK] 嵌入式控制事件已发射: ${messageType}`);
+                
+                // 如果还有音频数据，继续处理
+                const audioData = uint8Array.slice(8 + controlDataLength);
+                if (audioData.length > 0) {
+                  logger.debug(`[SDK] 继续处理嵌入的音频数据，大小: ${audioData.length} 字节`);
+                  await this.handleBinaryAudioMessage(audioData.buffer);
+                }
+                return;
+              }
+            } catch (parseError) {
+              logger.debug(`[SDK] 嵌入式控制事件解析失败:`, parseError);
+            }
+          }
+        }
+      }
+      
+      // 策略3：如果都不是控制事件，回退到纯二进制音频处理
+      logger.debug(`[SDK] 未检测到控制事件，回退到纯二进制音频处理`);
+      await this.handleBinaryAudioMessage(buffer);
+      
+    } catch (error) {
+      logger.error(`[SDK] 混合协议处理失败:`, error);
+      throw error;
+    }
   }
 
   /**

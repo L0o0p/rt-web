@@ -16,7 +16,10 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
 
   // 检查数据长度是否为偶数（16位PCM应该是成对字节）
   if (pcmData.length % 2 !== 0) {
-    console.warn('PCM data length is not even, may cause data loss');
+    console.warn('[AudioUtils] ⚠️ PCM数据长度不是偶数，可能导致数据丢失:', {
+      length: pcmData.length,
+      remainder: pcmData.length % 2
+    });
   }
 
   const sampleCount = pcmData.length >> 1; // 等同于 Math.floor(pcmData.length / 2)，但更快
@@ -25,15 +28,58 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
   // 使用 DataView 进行更高效的二进制数据操作
   const dataView = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
 
+  // 调试：检查前几个样本的字节序和值
+  const debugSamples = Math.min(5, sampleCount);
+  const littleEndianSamples: number[] = [];
+  const bigEndianSamples: number[] = [];
+  
+  for (let i = 0; i < debugSamples; i++) {
+    const littleEndianValue = dataView.getInt16(i * 2, true);
+    const bigEndianValue = dataView.getInt16(i * 2, false);
+    littleEndianSamples.push(littleEndianValue);
+    bigEndianSamples.push(bigEndianValue);
+  }
+
+  console.debug('[AudioUtils] 🔍 PCM16到Float32转换调试:', {
+    inputSize: pcmData.length,
+    sampleCount,
+    firstFewBytes: Array.from(pcmData.slice(0, 16)),
+    littleEndianSamples,
+    bigEndianSamples,
+    byteOrderDifference: littleEndianSamples.map((le, i) => Math.abs(le - bigEndianSamples[i])),
+    isLittleEndianReasonable: littleEndianSamples.some(v => Math.abs(v) > 100 && Math.abs(v) < 32768),
+    isBigEndianReasonable: bigEndianSamples.some(v => Math.abs(v) > 100 && Math.abs(v) < 32768)
+  });
+
   // 处理每个采样点
+  let minFloat = Infinity, maxFloat = -Infinity;
+  let minInt16 = Infinity, maxInt16 = -Infinity;
+  
   for (let i = 0; i < sampleCount; i++) {
     // 直接读取有符号16位整数（小端序）
     const int16Value = dataView.getInt16(i * 2, true); // true 表示小端序
 
     // 归一化到 [-1, 1] 范围
     // 使用位移运算优化除法：32768 = 2^15
-    floatData[i] = int16Value / 32768;
+    const floatValue = int16Value / 32768;
+    floatData[i] = floatValue;
+
+    // 统计极值用于调试
+    if (floatValue < minFloat) minFloat = floatValue;
+    if (floatValue > maxFloat) maxFloat = floatValue;
+    if (int16Value < minInt16) minInt16 = int16Value;
+    if (int16Value > maxInt16) maxInt16 = int16Value;
   }
+
+  // 调试：输出转换结果统计
+  console.debug('[AudioUtils] 📊 PCM16到Float32转换结果:', {
+    int16Range: { min: minInt16, max: maxInt16 },
+    floatRange: { min: minFloat, max: maxFloat },
+    isFloatInRange: minFloat >= -1 && maxFloat <= 1,
+    hasClipping: maxFloat > 1 || minFloat < -1,
+    dynamicRange: maxFloat - minFloat,
+    avgAmplitude: (Math.abs(maxFloat) + Math.abs(minFloat)) / 2
+  });
 
   return floatData;
 }

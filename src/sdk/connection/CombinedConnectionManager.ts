@@ -137,16 +137,16 @@ export class CombinedConnectionManager extends EventEmitter {
 
       const messageStr = JSON.stringify(fullMessage);
 
-      // 添加详细的发送日志
+      // 性能优化：减少详细日志输出
       if (message && typeof message === 'object' && 'type' in message && message.type === 'session_config') {
         const sessionConfig = message as SessionConfigPayload;
         logger.info(`[CLIENT] Sending WebSocket message with asr_language: ${sessionConfig.asr_language}`);
-        logger.info(`[CLIENT] Full WebSocket message:`, JSON.stringify(fullMessage, null, 2));
+        // 移除详细的完整消息日志
       }
 
       try {
         this.websocket.send(messageStr);
-        logger.info(`[CLIENT] Message sent successfully`);
+        // 移除频繁的成功发送日志
       } catch (error) {
         logger.error(`发送文本消息失败: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -162,23 +162,14 @@ export class CombinedConnectionManager extends EventEmitter {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       try {
         const bytes = message.toBytes();
-        logger.info(`[BINARY] 发送二进制消息 - 会话ID: ${message.header.sessionId}, 协议ID: ${message.header.protocolId}, 命令ID: ${message.header.commandId}, 总大小: ${bytes.length}字节`);
-
-        // 如果是图像数据，记录更多信息
-        if (message.header.commandId === 6) { // ImageData command
-          // 解析新的payload格式信息
-          if (message.payload.length >= 4) {
-            const promptLengthView = new DataView(message.payload.buffer, message.payload.byteOffset, 4);
-            const promptLength = promptLengthView.getUint32(0, true); // 小端序
-            const imageDataLength = message.payload.length - 4 - promptLength;
-            logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节 (提示词长度: ${promptLength}字节, 图像数据: ${imageDataLength}字节)`);
-          } else {
-            logger.info(`[BINARY] 图像数据详情 - 头部: 32字节, 载荷: ${message.payload.length}字节 (格式异常: payload太短)`);
-          }
+        
+        // 性能优化：减少二进制消息的详细日志
+        if (message.header.commandId === 6) { // ImageData command - 仅图像数据记录详情
+          logger.info(`[BINARY] 发送图像数据 - 会话ID: ${message.header.sessionId}, 大小: ${bytes.length}字节`);
         }
 
         this.websocket.send(bytes);
-        logger.info(`[BINARY] 二进制消息发送成功`);
+        // 移除频繁的成功发送日志
       } catch (error) {
         logger.error(`[BINARY] 发送二进制消息失败: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -466,8 +457,8 @@ export class CombinedConnectionManager extends EventEmitter {
   public startHighPrecisionTimer(eventType: string): void {
     const now = performance.now();
     this.performanceTimers.set(eventType, now);
-    console.log(`[DEBUG] 启动高精度计时器: ${eventType} at ${now}`);
-
+    // 性能优化：移除频繁的调试日志
+    
     // 立即发出计时开始事件
     this.emit('performance:timer:start', {
       type: eventType,
@@ -484,10 +475,9 @@ export class CombinedConnectionManager extends EventEmitter {
   public stopHighPrecisionTimer(eventType: string): number | null {
     const endTime = performance.now();
     const startTime = this.performanceTimers.get(eventType);
-    console.log(`[DEBUG] 尝试停止计时器: ${eventType}, 开始时间: ${startTime}, 结束时间: ${endTime}`);
+    // 性能优化：移除频繁的调试日志
 
     if (startTime === undefined) {
-      console.log(`[DEBUG] 计时器 ${eventType} 未找到`);
       return null;
     }
 
@@ -778,18 +768,12 @@ export class CombinedConnectionManager extends EventEmitter {
 
       // ========== 高精度性能监控 - 二进制音频延迟计算 ==========
       // 停止 binary_audio_delta 事件的计时器（优先方案）
-      // 这是新的延迟计算方式，替代原有的 response.audio.delta
-      console.log('[DEBUG] 尝试停止 binary_audio_delta 计时器');
       const latency = this.stopHighPrecisionTimer('binary_audio_delta');
       if (latency !== null) {
         logger.info(`[PERF] High-precision latency for binary_audio_delta: ${latency.toFixed(3)}ms`);
-        console.log(`[DEBUG] binary_audio_delta 延迟测量成功: ${latency.toFixed(3)}ms`);
-      } else {
-        console.log('[DEBUG] binary_audio_delta 计时器未找到或已停止');
       }
 
-      // 发射解码后的音频数据事件
-      console.log(`[DEBUG] 发射 binary_audio_delta 事件，响应ID: ${decodedAudio.responseId}`);
+      // 性能优化：移除频繁的调试日志
       this.emit('binary_audio_delta', {
         type: 'binary_audio_delta',
         responseId: decodedAudio.responseId,

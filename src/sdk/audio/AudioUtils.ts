@@ -8,6 +8,14 @@
  * @returns Float32Array格式的数据，范围在 [-1, 1]
  * @throws {Error} 当输入数据无效时抛出错误
  */
+// 性能优化：添加调试模式控制
+let debugMode = false;
+let debugCounter = 0;
+
+export function setPCMDebugMode(enabled: boolean): void {
+  debugMode = enabled;
+}
+
 export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
   // 输入验证
   if (!pcmData) {
@@ -15,7 +23,7 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
   }
 
   // 检查数据长度是否为偶数（16位PCM应该是成对字节）
-  if (pcmData.length % 2 !== 0) {
+  if (pcmData.length % 2 !== 0 && debugMode) {
     console.warn('[AudioUtils] ⚠️ PCM数据长度不是偶数，可能导致数据丢失:', {
       length: pcmData.length,
       remainder: pcmData.length % 2
@@ -28,33 +36,20 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
   // 使用 DataView 进行更高效的二进制数据操作
   const dataView = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
 
-  // 调试：检查前几个样本的字节序和值
-  const debugSamples = Math.min(5, sampleCount);
-  const littleEndianSamples: number[] = [];
-  const bigEndianSamples: number[] = [];
-  
-  for (let i = 0; i < debugSamples; i++) {
-    const littleEndianValue = dataView.getInt16(i * 2, true);
-    const bigEndianValue = dataView.getInt16(i * 2, false);
-    littleEndianSamples.push(littleEndianValue);
-    bigEndianSamples.push(bigEndianValue);
+  // 性能优化：移除频繁的调试日志，仅在调试模式下且间隔性输出
+  if (debugMode && debugCounter % 100 === 0) {
+    console.debug('[AudioUtils] 🔍 PCM16到Float32转换调试 #' + debugCounter, {
+      inputSize: pcmData.length,
+      sampleCount
+    });
   }
+  debugCounter++;
 
-  console.debug('[AudioUtils] 🔍 PCM16到Float32转换调试:', {
-    inputSize: pcmData.length,
-    sampleCount,
-    firstFewBytes: Array.from(pcmData.slice(0, 16)),
-    littleEndianSamples,
-    bigEndianSamples,
-    byteOrderDifference: littleEndianSamples.map((le, i) => Math.abs(le - bigEndianSamples[i])),
-    isLittleEndianReasonable: littleEndianSamples.some(v => Math.abs(v) > 100 && Math.abs(v) < 32768),
-    isBigEndianReasonable: bigEndianSamples.some(v => Math.abs(v) > 100 && Math.abs(v) < 32768)
-  });
-
-  // 处理每个采样点
+  // 性能优化：使用更高效的批量处理方式
   let minFloat = Infinity, maxFloat = -Infinity;
   let minInt16 = Infinity, maxInt16 = -Infinity;
   
+  // 使用单个循环处理所有样本，减少函数调用开销
   for (let i = 0; i < sampleCount; i++) {
     // 直接读取有符号16位整数（小端序）
     const int16Value = dataView.getInt16(i * 2, true); // true 表示小端序
@@ -64,22 +59,25 @@ export function pcm16ToFloat32(pcmData: Uint8Array): Float32Array {
     const floatValue = int16Value / 32768;
     floatData[i] = floatValue;
 
-    // 统计极值用于调试
-    if (floatValue < minFloat) minFloat = floatValue;
-    if (floatValue > maxFloat) maxFloat = floatValue;
-    if (int16Value < minInt16) minInt16 = int16Value;
-    if (int16Value > maxInt16) maxInt16 = int16Value;
+    // 仅在调试模式下统计极值
+    if (debugMode) {
+      if (floatValue < minFloat) minFloat = floatValue;
+      if (floatValue > maxFloat) maxFloat = floatValue;
+      if (int16Value < minInt16) minInt16 = int16Value;
+      if (int16Value > maxInt16) maxInt16 = int16Value;
+    }
   }
 
-  // 调试：输出转换结果统计
-  console.debug('[AudioUtils] 📊 PCM16到Float32转换结果:', {
-    int16Range: { min: minInt16, max: maxInt16 },
-    floatRange: { min: minFloat, max: maxFloat },
-    isFloatInRange: minFloat >= -1 && maxFloat <= 1,
-    hasClipping: maxFloat > 1 || minFloat < -1,
-    dynamicRange: maxFloat - minFloat,
-    avgAmplitude: (Math.abs(maxFloat) + Math.abs(minFloat)) / 2
-  });
+  // 性能优化：仅在调试模式下且间隔性输出结果统计
+  if (debugMode && debugCounter % 100 === 0) {
+    console.debug('[AudioUtils] 📊 PCM16到Float32转换结果统计:', {
+      int16Range: { min: minInt16, max: maxInt16 },
+      floatRange: { min: minFloat, max: maxFloat },
+      isFloatInRange: minFloat >= -1 && maxFloat <= 1,
+      hasClipping: maxFloat > 1 || minFloat < -1,
+      dynamicRange: maxFloat - minFloat
+    });
+  }
 
   return floatData;
 }

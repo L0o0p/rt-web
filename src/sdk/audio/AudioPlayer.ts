@@ -18,10 +18,21 @@ export class AudioPlayer {
     private readonly MAX_CLEAR_COUNT: number = 5; // 最大连续清空次数
     private readonly MAX_RESET_COUNT: number = 3; // 最大连续重置次数
 
+    private debugMode: boolean = false; // 性能优化：调试模式控制
+
     constructor() {
         this.initAudioContext();
         // 随机化处理器名称，允许多个 player 共存
         this.processorName = `pcm-player-processor-` + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    // 设置调试模式
+    public setDebugMode(enabled: boolean): void {
+        this.debugMode = enabled;
+        if (this.playbackNode) {
+            this.playbackNode.port.postMessage({ type: 'setDebugMode', enabled });
+        }
+        console.log('[AudioPlayer] 调试模式:', enabled ? '启用' : '禁用');
     }
 
     // 初始化音频上下文
@@ -55,33 +66,49 @@ export class AudioPlayer {
                     this.current = null;
                     this.isPlaying = false;
                     this.clearCount = 0; // 用于调试的清空计数器
+                    this.debugMode = false; // 性能优化：默认关闭调试模式
+                    this.lastLogTime = 0;
                     this.port.onmessage = (event) => {
                         const data = event.data;
                         if (!data) return;
                         if (data.type === 'push' && data.samples instanceof Float32Array) {
-                            // 将一帧样本入队
-                            console.log('[AudioWorklet] 音频数据入队，当前队列长度:', this.queue.length, '清空计数:', this.clearCount);
+                            // 将一帧样本入队 - 移除频繁日志
+                            if (this.debugMode && Date.now() - this.lastLogTime > 1000) {
+                                console.log('[AudioWorklet] 音频数据入队，当前队列长度:', this.queue.length, '清空计数:', this.clearCount);
+                                this.lastLogTime = Date.now();
+                            }
                             this.queue.push(data.samples);
                             this.isPlaying = true;
                         } else if (data.type === 'clear') {
                             // 清空队列 - 用于音频打断
                             const queueLength = this.queue.length;
                             this.clearCount++;
-                            console.log('[AudioWorklet] 🔴 收到清空队列指令 #' + this.clearCount + '，当前队列长度:', queueLength);
+                            if (this.debugMode) {
+                                console.log('[AudioWorklet] 🔴 收到清空队列指令 #' + this.clearCount + '，当前队列长度:', queueLength);
+                            }
                             this.queue = [];
                             this.current = null;
                             this.readIndex = 0;
                             this.isPlaying = false;
-                            console.log('[AudioWorklet] 🔴 队列已清空，清空计数:', this.clearCount);
+                            if (this.debugMode) {
+                                console.log('[AudioWorklet] 🔴 队列已清空，清空计数:', this.clearCount);
+                            }
                         } else if (data.type === 'reset') {
                             // 重置播放器状态
-                            console.log('[AudioWorklet] 🔴 收到重置指令');
+                            if (this.debugMode) {
+                                console.log('[AudioWorklet] 🔴 收到重置指令');
+                            }
                             this.queue = [];
                             this.current = null;
                             this.readIndex = 0;
                             this.isPlaying = false;
                             this.clearCount = 0;
-                            console.log('[AudioWorklet] 🔴 播放器已重置');
+                            if (this.debugMode) {
+                                console.log('[AudioWorklet] 🔴 播放器已重置');
+                            }
+                        } else if (data.type === 'setDebugMode') {
+                            this.debugMode = data.enabled;
+                            console.log('[AudioWorklet] 调试模式:', this.debugMode ? '启用' : '禁用');
                         }
                     };
                 }
@@ -157,78 +184,37 @@ export class AudioPlayer {
         await this.ensurePlaybackWorklet();
 
         try {
-            // 🔍 诊断日志1：检查音频流时序和队列状态
-            const now = performance.now();
-            console.log('[AudioPlayer] 🔍 音频流诊断:', {
-                timestamp: now,
-                dataSize: audioData.length,
-                isPlaying: this.isPlaying,
-                lastClearTime: this.lastClearTime,
-                clearCount: this.clearCount,
-                timeSinceLastClear: now - this.lastClearTime,
-                potentialOverlap: this.isPlaying && (now - this.lastClearTime) < 100
-            });
-
-            // 调试：检查PCM数据质量
-            if (audioData.length >= 4) {
-                const dataView = new DataView(audioData.buffer, audioData.byteOffset, audioData.byteLength);
-                const firstSample = dataView.getInt16(0, true); // 小端序
-                const secondSample = dataView.getInt16(2, true); // 小端序
-                console.debug('[AudioPlayer] 🔍 输入PCM样本检查:', {
+            // 性能优化：减少诊断日志，仅在必要时输出
+            if (this.clearCount % 100 === 0 || this.lastClearTime === 0) {
+                const now = performance.now();
+                console.log('[AudioPlayer] 🔍 音频流诊断:', {
+                    timestamp: now,
                     dataSize: audioData.length,
-                    sampleCount: audioData.length / 2,
-                    firstSample,
-                    secondSample,
-                    firstSampleBigEndian: dataView.getInt16(0, false),
-                    secondSampleBigEndian: dataView.getInt16(2, false),
-                    byteOrder: 'little_endian_assumed'
+                    isPlaying: this.isPlaying,
+                    lastClearTime: this.lastClearTime,
+                    clearCount: this.clearCount,
+                    timeSinceLastClear: now - this.lastClearTime,
+                    potentialOverlap: this.isPlaying && (now - this.lastClearTime) < 100
                 });
+            }
+
+            // 性能优化：仅在数据异常时检查PCM数据质量
+            if (audioData.length < 4) {
+                console.warn('[AudioPlayer] ⚠️ PCM数据长度异常:', audioData.length);
             }
 
             const floatData = pcm16ToFloat32(audioData);
 
-            // 🔍 诊断日志2：检查Float32数据质量
-            if (floatData.length >= 2) {
-                const first100 = Array.from(floatData.slice(0, Math.min(100, floatData.length)));
-                const floatRange = {
-                    min: Math.min(...first100),
-                    max: Math.max(...first100),
-                    avg: first100.reduce((a, b) => a + b, 0) / first100.length,
-                    zeroCount: first100.filter(x => Math.abs(x) < 0.001).length,
-                    clipCount: first100.filter(x => Math.abs(x) > 0.99).length
-                };
-                
-                console.log('[AudioPlayer] 🔍 音频质量诊断:', {
-                    floatSize: floatData.length,
-                    firstFloatSample: floatData[0],
-                    secondFloatSample: floatData[1],
-                    floatRange,
-                    isInRange: floatData[0] >= -1 && floatData[0] <= 1,
-                    potentialDistortion: floatRange.clipCount > 10 || floatRange.zeroCount > 80
-                });
-            }
-
-            // 调试：检查AudioWorklet状态
-            if (this.audioContext && this.playbackNode) {
-                console.debug('[AudioPlayer] 🎛️ AudioWorklet状态检查:', {
-                    contextState: this.audioContext.state,
-                    sampleRate: this.audioContext.sampleRate,
-                    currentTime: this.audioContext.currentTime,
-                    workletProcessor: this.processorName,
-                    nodeConnected: this.playbackNode.numberOfOutputs > 0,
-                    destination: this.audioContext.destination ? 'available' : 'unavailable'
-                });
+            // 性能优化：移除详细的Float32数据质量检查，仅做基本验证
+            if (floatData.length === 0) {
+                console.warn('[AudioPlayer] ⚠️ 转换后的Float32数据为空');
+                return;
             }
 
             // 将样本推送到播放队列，使用可转移对象减少拷贝
             if (this.playbackNode) {
                 this.playbackNode.port.postMessage({ type: 'push', samples: floatData }, [floatData.buffer]);
-                console.log('[AudioPlayer] 📤 音频数据已发送到AudioWorklet:', {
-                    sampleCount: floatData.length,
-                    bufferSize: floatData.buffer.byteLength,
-                    transferable: true,
-                    queueState: 'pending_push'
-                });
+                // 移除频繁的发送日志
             } else {
                 console.warn('[AudioPlayer] ⚠️ AudioWorklet未初始化，无法播放音频');
             }
@@ -240,31 +226,22 @@ export class AudioPlayer {
         }
     }
 
-    // 清空音频队列 - 用于音频打断（优化版本）
+    // 清空音频队列 - 用于音频打断（高性能优化版本）
     clearQueue(): void {
         const now = Date.now();
         
         // 智能频率检查：防止过于频繁的清空操作
         if (now - this.lastClearTime < this.MIN_CLEAR_INTERVAL) {
-            console.warn('[AudioPlayer] ⚠️ 清空操作过于频繁，跳过本次操作');
-            console.log('[AudioPlayer] 📊 频率检查:', {
-                lastClearTime: this.lastClearTime,
-                currentTime: now,
-                interval: now - this.lastClearTime,
-                minInterval: this.MIN_CLEAR_INTERVAL,
-                clearCount: this.clearCount
-            });
+            // 移除详细日志，仅在必要时输出警告
             return;
         }
         
         // 智能状态检查：只有在真正需要时才清空
         if (!this.isPlaying) {
-            console.log('[AudioPlayer] 🔍 播放器未活跃，跳过清空操作');
             return;
         }
         
         if (!this.playbackNode) {
-            console.warn('[AudioPlayer] AudioWorklet未初始化，无法清空队列');
             return;
         }
         
@@ -272,28 +249,20 @@ export class AudioPlayer {
         this.lastClearTime = now;
         this.clearCount++;
         
-        console.log('[AudioPlayer] 🔴 执行智能音频队列清空');
-        console.log('[AudioPlayer] 📊 清空统计:', {
-            clearCount: this.clearCount,
-            lastClearTime: this.lastClearTime,
-            isPlaying: this.isPlaying,
-            hasWorklet: !!this.playbackNode
-        });
+        // 性能优化：减少日志输出
+        if (this.clearCount % 10 === 0) {
+            console.log('[AudioPlayer] 🔴 执行智能音频队列清空 #' + this.clearCount);
+        }
         
         // 发送清空指令
         this.playbackNode.port.postMessage({ type: 'clear' });
         
         // 立即更新播放状态
         this.isPlaying = false;
-        console.log('[AudioPlayer] 🔴 播放状态已重置为false');
         
         // 如果清空次数过多，记录警告
         if (this.clearCount > this.MAX_CLEAR_COUNT) {
-            console.warn('[AudioPlayer] 🚨 清空次数过多，可能存在异常:', {
-                clearCount: this.clearCount,
-                maxClearCount: this.MAX_CLEAR_COUNT,
-                timeWindow: '最近一段时间'
-            });
+            console.warn('[AudioPlayer] 🚨 清空次数过多，可能存在异常:', this.clearCount);
         }
     }
 

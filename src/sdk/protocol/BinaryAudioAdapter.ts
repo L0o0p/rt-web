@@ -27,11 +27,13 @@ import type {
 /**
  * 音频协议类型
  */
-export enum AudioProtocolType {
-  JSON = 'json',           // 传统的WebSocket JSON协议
-  BINARY = 'binary',       // 新的二进制协议
-  AUTO = 'auto'            // 自动检测和切换
-}
+export type AudioProtocolType = 'json' | 'binary' | 'auto';
+
+export const AudioProtocolType = {
+  JSON: 'json' as const,
+  BINARY: 'binary' as const,
+  AUTO: 'auto' as const
+};
 
 /**
  * 音频协议适配器配置
@@ -58,7 +60,7 @@ export const DEFAULT_ADAPTER_CONFIG: AudioAdapterConfig = {
   enableAutoSwitch: true,
   switchThreshold: 3,
   enablePerformanceMonitoring: true
-} as const;
+};
 
 /**
  * 音频协议适配器
@@ -76,7 +78,7 @@ export class BinaryAudioAdapter {
     this.config = { ...DEFAULT_ADAPTER_CONFIG, ...config };
     this.currentProtocol = this.config.protocolType;
     this.performanceMetrics = this.createInitialMetrics();
-    
+
     // 检测二进制协议是否可用
     this.detectBinaryProtocolAvailability();
   }
@@ -187,7 +189,7 @@ export class BinaryAudioAdapter {
 
     try {
       const audioEvent: ResponseAudioDeltaEvent = JSON.parse(jsonString);
-      
+
       if (!audioEvent || typeof audioEvent.delta !== 'string') {
         throw new Error('无效的音频事件格式');
       }
@@ -241,7 +243,7 @@ export class BinaryAudioAdapter {
    */
   private switchProtocol(): void {
     const oldProtocol = this.currentProtocol;
-    
+
     if (this.currentProtocol === AudioProtocolType.BINARY && this.isBinaryProtocolAvailable) {
       this.currentProtocol = AudioProtocolType.JSON;
     } else if (this.currentProtocol === AudioProtocolType.JSON && this.isBinaryProtocolAvailable) {
@@ -259,7 +261,7 @@ export class BinaryAudioAdapter {
    */
   public updateConfig(config: Partial<AudioAdapterConfig>): void {
     this.config = { ...this.config, ...config };
-    
+
     // 如果协议类型改变，重置失败计数
     if (config.protocolType && config.protocolType !== this.currentProtocol) {
       this.currentProtocol = config.protocolType;
@@ -360,8 +362,8 @@ export class BinaryAudioAdapter {
     }
 
     // 计算平均解码时间
-    this.performanceMetrics.averageDecodeTime = 
-      (this.performanceMetrics.averageDecodeTime * (this.performanceMetrics.decodeOperations - 1) + duration) / 
+    this.performanceMetrics.averageDecodeTime =
+      (this.performanceMetrics.averageDecodeTime * (this.performanceMetrics.decodeOperations - 1) + duration) /
       this.performanceMetrics.decodeOperations;
 
     if (this.config.enablePerformanceMonitoring) {

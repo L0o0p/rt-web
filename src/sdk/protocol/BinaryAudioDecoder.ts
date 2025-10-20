@@ -50,19 +50,19 @@ export function decodeResponseAudioDeltaMessage(
   try {
     // 基本验证
     validateBuffer(buffer);
-    
+
     // 解析协议头
     const header = parseHeader(buffer, context);
-    
+
     // 验证协议和命令ID
     validateProtocolAndCommand(header, context);
-    
+
     // 解析载荷数据
     const payload = parsePayload(buffer, context);
-    
+
     // 更新性能指标
     updateMetrics(context, true, buffer.byteLength);
-    
+
     if (finalConfig.enableDebugLogging) {
       console.debug('[BinaryAudioDecoder] 解码成功:', {
         responseId: payload.responseId,
@@ -73,15 +73,15 @@ export function decodeResponseAudioDeltaMessage(
         decodeTime: performance.now() - context.startTime
       });
     }
-    
+
     return payload;
   } catch (error) {
     updateMetrics(context, false, buffer.byteLength);
-    
+
     if (error instanceof DecodingError) {
       throw error;
     }
-    
+
     // 将未知错误包装为 DecodingError
     throw DecodingError.corruptedData(
       `未知解码错误: ${error instanceof Error ? error.message : String(error)}`,
@@ -103,13 +103,12 @@ export function decodeResponseAudioDeltaMessageWithMetrics(
   buffer: ArrayBuffer,
   config: Partial<BinaryAudioProtocolConfig> = {}
 ): DecodingResult {
-  const _finalConfig = { ...DEFAULT_BINARY_AUDIO_CONFIG, ...config };
   const startTime = performance.now();
-  
+
   try {
     const data = decodeResponseAudioDeltaMessage(buffer, config);
     const duration = performance.now() - startTime;
-    
+
     return {
       success: true,
       data,
@@ -118,7 +117,7 @@ export function decodeResponseAudioDeltaMessageWithMetrics(
     };
   } catch (error) {
     const duration = performance.now() - startTime;
-    
+
     return {
       success: false,
       error: error instanceof DecodingError ? error : DecodingError.corruptedData(
@@ -137,7 +136,7 @@ function validateBuffer(buffer: ArrayBuffer): void {
   if (!(buffer instanceof ArrayBuffer)) {
     throw DecodingError.corruptedData('输入必须是 ArrayBuffer');
   }
-  
+
   if (buffer.byteLength < BINARY_AUDIO_PROTOCOL.HEADER_SIZE) {
     throw DecodingError.bufferTooSmall(
       BINARY_AUDIO_PROTOCOL.HEADER_SIZE,
@@ -152,23 +151,23 @@ function validateBuffer(buffer: ArrayBuffer): void {
 function parseHeader(buffer: ArrayBuffer, _context: DecodingContext) {
   const view = new DataView(buffer);
   const uint8Array = new Uint8Array(buffer);
-  
+
   // 提取会话ID (16字节)
   const sessionIdBytes = uint8Array.subarray(0, BINARY_AUDIO_PROTOCOL.SESSION_ID_SIZE);
   const sessionId = new TextDecoder().decode(sessionIdBytes);
-  
+
   // 提取协议ID (1字节)
   const protocolId = view.getUint8(BINARY_AUDIO_PROTOCOL.PROTOCOL_ID_OFFSET);
-  
+
   // 提取命令ID (1字节)
   const commandId = view.getUint8(BINARY_AUDIO_PROTOCOL.COMMAND_ID_OFFSET);
-  
+
   // 提取保留字段 (14字节)
   const reservedBytes = uint8Array.subarray(
     BINARY_AUDIO_PROTOCOL.COMMAND_ID_OFFSET + 1,
     BINARY_AUDIO_PROTOCOL.HEADER_SIZE
   );
-  
+
   return {
     sessionId,
     protocolId,
@@ -191,20 +190,20 @@ function validateProtocolAndCommand(
       header.protocolId
     );
   }
-  
+
   // 验证命令ID - 支持多种音频命令ID
   const validAudioCommandIds = [
     BINARY_AUDIO_PROTOCOL.COMMAND_ID.RESPONSE_AUDIO_DELTA,
     BINARY_AUDIO_PROTOCOL.COMMAND_ID.AUDIO_DELTA
   ];
-  
+
   if (!validAudioCommandIds.includes(header.commandId as any)) {
     throw DecodingError.invalidCommandId(
       25, // 主要期望的命令ID
       header.commandId
     );
   }
-  
+
   if (context.config.enableDebugLogging) {
     console.debug('[BinaryAudioDecoder] 协议头验证通过:', {
       protocolId: header.protocolId,
@@ -219,13 +218,13 @@ function validateProtocolAndCommand(
 function parsePayload(buffer: ArrayBuffer, _context: DecodingContext): DecodedAudioDeltaMessage {
   const view = new DataView(buffer);
   const uint8Array = new Uint8Array(buffer);
-  
+
   let offset = BINARY_AUDIO_PROTOCOL.HEADER_SIZE;
-  
+
   // 解析 responseId (4字节长度 + 字符串)
   const responseIdLength = view.getUint32(offset, true); // 小端序
   offset += 4;
-  
+
   if (responseIdLength > BINARY_AUDIO_PROTOCOL.STRING_LIMITS.RESPONSE_ID_MAX_LENGTH) {
     throw DecodingError.invalidStringLength(
       'responseId',
@@ -233,15 +232,15 @@ function parsePayload(buffer: ArrayBuffer, _context: DecodingContext): DecodedAu
       responseIdLength
     );
   }
-  
+
   const responseIdBytes = uint8Array.subarray(offset, offset + responseIdLength);
   const responseId = new TextDecoder().decode(responseIdBytes);
   offset += responseIdLength;
-  
+
   // 解析 itemId (4字节长度 + 字符串)
   const itemIdLength = view.getUint32(offset, true);
   offset += 4;
-  
+
   if (itemIdLength > BINARY_AUDIO_PROTOCOL.STRING_LIMITS.ITEM_ID_MAX_LENGTH) {
     throw DecodingError.invalidStringLength(
       'itemId',
@@ -249,26 +248,26 @@ function parsePayload(buffer: ArrayBuffer, _context: DecodingContext): DecodedAu
       itemIdLength
     );
   }
-  
+
   const itemIdBytes = uint8Array.subarray(offset, offset + itemIdLength);
   const itemId = new TextDecoder().decode(itemIdBytes);
   offset += itemIdLength;
-  
+
   // 解析 outputIndex (4字节)
   const outputIndex = view.getUint32(offset, true);
   offset += 4;
-  
+
   // 解析 contentIndex (4字节)
   const contentIndex = view.getUint32(offset, true);
   offset += 4;
-  
+
   // 剩余数据为音频数据
   const audioData = uint8Array.subarray(offset);
-  
+
   if (audioData.length === 0) {
     throw DecodingError.corruptedData('音频数据为空');
   }
-  
+
   return {
     responseId,
     itemId,
@@ -303,22 +302,22 @@ function updateMetrics(
 ): void {
   const metrics = context.metrics;
   const decodeTime = performance.now() - context.startTime;
-  
+
   metrics.decodeOperations++;
   metrics.totalBytesDecoded += bytesProcessed;
   metrics.lastDecodeTime = decodeTime;
-  
+
   if (success) {
     metrics.successfulDecodes++;
   } else {
     metrics.failedDecodes++;
   }
-  
+
   // 计算平均解码时间
-  metrics.averageDecodeTime = 
-    (metrics.averageDecodeTime * (metrics.decodeOperations - 1) + decodeTime) / 
+  metrics.averageDecodeTime =
+    (metrics.averageDecodeTime * (metrics.decodeOperations - 1) + decodeTime) /
     metrics.decodeOperations;
-  
+
   if (context.config.enablePerformanceMonitoring) {
     console.debug('[BinaryAudioDecoder] 性能指标更新:', {
       operations: metrics.decodeOperations,
@@ -353,54 +352,54 @@ export function createMockBinaryPacket(options: {
     contentIndex = 5,
     audioData = new TextEncoder().encode('binary-audio-stream-data')
   } = options;
-  
+
   // 确保sessionId是16字节
   const sessionIdBytes = new TextEncoder().encode(sessionId.substring(0, 16));
-  
+
   // 计算载荷大小
   const payloadSize = 4 + responseId.length + 4 + itemId.length + 4 + 4 + audioData.length;
   const totalSize = BINARY_AUDIO_PROTOCOL.HEADER_SIZE + payloadSize;
-  
+
   // 创建缓冲区
   const buffer = new ArrayBuffer(totalSize);
   const view = new DataView(buffer);
   const uint8Array = new Uint8Array(buffer);
-  
+
   let offset = 0;
-  
+
   // 写入协议头
   uint8Array.set(sessionIdBytes, offset);
   offset += BINARY_AUDIO_PROTOCOL.SESSION_ID_SIZE;
-  
+
   view.setUint8(offset, BINARY_AUDIO_PROTOCOL.PROTOCOL_ID.ALL);
   offset += 1;
-  
+
   view.setUint8(offset, BINARY_AUDIO_PROTOCOL.COMMAND_ID.RESPONSE_AUDIO_DELTA);
   offset += 1;
-  
+
   // 保留字段（14字节）
   const reserved = new Uint8Array(BINARY_AUDIO_PROTOCOL.RESERVED_SIZE);
   uint8Array.set(reserved, offset);
   offset += BINARY_AUDIO_PROTOCOL.RESERVED_SIZE;
-  
+
   // 写入载荷（小端序）
   view.setUint32(offset, responseId.length, true);
   offset += 4;
   uint8Array.set(new TextEncoder().encode(responseId), offset);
   offset += responseId.length;
-  
+
   view.setUint32(offset, itemId.length, true);
   offset += 4;
   uint8Array.set(new TextEncoder().encode(itemId), offset);
   offset += itemId.length;
-  
+
   view.setUint32(offset, outputIndex, true);
   offset += 4;
-  
+
   view.setUint32(offset, contentIndex, true);
   offset += 4;
-  
+
   uint8Array.set(audioData, offset);
-  
+
   return buffer;
 }

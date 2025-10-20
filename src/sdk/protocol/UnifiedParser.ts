@@ -17,7 +17,6 @@ import {
 } from './BinaryAudioDecoder';
 
 import type {
-  DecodedAudioDeltaMessage,
   BinaryAudioProtocolConfig,
   DecodingResult
 } from './BinaryAudioTypes';
@@ -113,7 +112,7 @@ export class WebSocketMessageParser implements MessageParser<string> {
 export class BinaryMessageParser implements MessageParser<ArrayBuffer> {
   /** 二进制音频协议配置 */
   private binaryAudioConfig: BinaryAudioProtocolConfig;
-  
+
   constructor(config: Partial<BinaryAudioProtocolConfig> = {}) {
     this.binaryAudioConfig = { ...DEFAULT_BINARY_AUDIO_CONFIG, ...config };
   }
@@ -187,10 +186,10 @@ export class BinaryMessageParser implements MessageParser<ArrayBuffer> {
         // 音频数据载荷
         // 检查是否启用新的二进制音频协议
         if (this.binaryAudioConfig.enabled &&
-            binaryMessage.header.protocolId === BINARY_AUDIO_PROTOCOL.PROTOCOL_ID.ALL) {
+          binaryMessage.header.protocolId === BINARY_AUDIO_PROTOCOL.PROTOCOL_ID.ALL) {
           return this.extractBinaryAudioPayload(binaryMessage);
         }
-        
+
         // 传统音频块处理
         const buffer = binaryMessage.payload.buffer;
         return {

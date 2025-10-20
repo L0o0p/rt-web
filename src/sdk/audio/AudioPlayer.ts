@@ -7,7 +7,7 @@ export class AudioPlayer {
     private playbackNode: AudioWorkletNode | null = null;
     private workletReady: Promise<void> | null = null;
     private processorName: string;
-    
+
     // 新增：智能打断控制
     private lastClearTime: number = 0;
     private lastResetTime: number = 0;
@@ -18,12 +18,13 @@ export class AudioPlayer {
     private readonly MAX_CLEAR_COUNT: number = 5; // 最大连续清空次数
     private readonly MAX_RESET_COUNT: number = 3; // 最大连续重置次数
 
-    private debugMode: boolean = false; // 性能优化：调试模式控制
+    private debugMode: boolean = true; // 临时启用调试模式以诊断音频问题
 
     constructor() {
         this.initAudioContext();
         // 随机化处理器名称，允许多个 player 共存
         this.processorName = `pcm-player-processor-` + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        console.log('[AudioPlayer] 🔊 音频播放器已创建，调试模式已启用');
     }
 
     // 设置调试模式
@@ -66,19 +67,32 @@ export class AudioPlayer {
                     this.current = null;
                     this.isPlaying = false;
                     this.clearCount = 0; // 用于调试的清空计数器
-                    this.debugMode = false; // 性能优化：默认关闭调试模式
+                    this.debugMode = true; // 临时启用调试模式以诊断音频问题
                     this.lastLogTime = 0;
+                    this.underrunCount = 0; // 缓冲区欠载计数
+                    this.lastSample = 0; // 记录最后一个样本值，用于平滑过渡
+                    this.totalSamplesReceived = 0; // 总接收的样本数
                     this.port.onmessage = (event) => {
                         const data = event.data;
                         if (!data) return;
                         if (data.type === 'push' && data.samples instanceof Float32Array) {
-                            // 将一帧样本入队 - 移除频繁日志
-                            if (this.debugMode && Date.now() - this.lastLogTime > 1000) {
-                                console.log('[AudioWorklet] 音频数据入队，当前队列长度:', this.queue.length, '清空计数:', this.clearCount);
-                                this.lastLogTime = Date.now();
-                            }
+                            // 将一帧样本入队
+                            this.totalSamplesReceived += data.samples.length;
                             this.queue.push(data.samples);
                             this.isPlaying = true;
+                            
+                            // 每秒输出一次状态日志
+                            const now = Date.now();
+                            if (this.debugMode && now - this.lastLogTime > 1000) {
+                                console.log('[AudioWorklet] 📊 队列状态:', {
+                                    queueLength: this.queue.length,
+                                    samplesInQueue: this.queue.reduce((sum, arr) => sum + arr.length, 0),
+                                    totalReceived: this.totalSamplesReceived,
+                                    underruns: this.underrunCount,
+                                    clearCount: this.clearCount
+                                });
+                                this.lastLogTime = now;
+                            }
                         } else if (data.type === 'clear') {
                             // 清空队列 - 用于音频打断
                             const queueLength = this.queue.length;
@@ -124,8 +138,27 @@ export class AudioPlayer {
                                 this.current = this.queue.shift();
                                 this.readIndex = 0;
                             } else {
-                                // 缺帧填充静音，避免爆音
-                                for (let i = offset; i < framesNeeded; i++) channel[i] = 0;
+                                // 缓冲区欠载 - 使用平滑淡出而不是突然填充静音
+                                this.underrunCount++;
+                                if (this.debugMode && this.underrunCount % 10 === 1) {
+                                    console.warn('[AudioWorklet] ⚠️ 缓冲区欠载 #' + this.underrunCount + '，队列为空，使用平滑淡出');
+                                }
+                                
+                                // 使用淡出效果平滑过渡到静音，避免爆音
+                                const remainingSamples = framesNeeded - offset;
+                                const fadeOutLength = Math.min(remainingSamples, 64); // 最多64个样本的淡出
+                                
+                                for (let i = 0; i < fadeOutLength; i++) {
+                                    const fadeRatio = 1.0 - (i / fadeOutLength);
+                                    channel[offset + i] = this.lastSample * fadeRatio;
+                                }
+                                
+                                // 剩余部分填充静音
+                                for (let i = fadeOutLength; i < remainingSamples; i++) {
+                                    channel[offset + i] = 0;
+                                }
+                                
+                                this.lastSample = 0; // 重置最后样本值
                                 break;
                             }
                         }
@@ -135,6 +168,12 @@ export class AudioPlayer {
                         const toCopy = remainingInOutput < remainingInCurrent ? remainingInOutput : remainingInCurrent;
 
                         channel.set(this.current.subarray(this.readIndex, this.readIndex + toCopy), offset);
+                        
+                        // 记录最后一个样本值
+                        if (toCopy > 0) {
+                            this.lastSample = this.current[this.readIndex + toCopy - 1];
+                        }
+                        
                         offset += toCopy;
                         this.readIndex += toCopy;
 
@@ -184,17 +223,13 @@ export class AudioPlayer {
         await this.ensurePlaybackWorklet();
 
         try {
-            // 性能优化：减少诊断日志，仅在必要时输出
-            if (this.clearCount % 100 === 0 || this.lastClearTime === 0) {
-                const now = performance.now();
-                console.log('[AudioPlayer] 🔍 音频流诊断:', {
-                    timestamp: now,
+            // 调试：记录音频数据到达情况
+            const now = performance.now();
+            if (this.debugMode) {
+                console.log('[AudioPlayer] 🎵 收到音频数据:', {
                     dataSize: audioData.length,
-                    isPlaying: this.isPlaying,
-                    lastClearTime: this.lastClearTime,
-                    clearCount: this.clearCount,
-                    timeSinceLastClear: now - this.lastClearTime,
-                    potentialOverlap: this.isPlaying && (now - this.lastClearTime) < 100
+                    timestamp: now.toFixed(2),
+                    isPlaying: this.isPlaying
                 });
             }
 
@@ -214,7 +249,9 @@ export class AudioPlayer {
             // 将样本推送到播放队列，使用可转移对象减少拷贝
             if (this.playbackNode) {
                 this.playbackNode.port.postMessage({ type: 'push', samples: floatData }, [floatData.buffer]);
-                // 移除频繁的发送日志
+                if (this.debugMode) {
+                    console.log('[AudioPlayer] ✅ 音频数据已推送到AudioWorklet队列');
+                }
             } else {
                 console.warn('[AudioPlayer] ⚠️ AudioWorklet未初始化，无法播放音频');
             }
@@ -229,37 +266,37 @@ export class AudioPlayer {
     // 清空音频队列 - 用于音频打断（高性能优化版本）
     clearQueue(): void {
         const now = Date.now();
-        
+
         // 智能频率检查：防止过于频繁的清空操作
         if (now - this.lastClearTime < this.MIN_CLEAR_INTERVAL) {
             // 移除详细日志，仅在必要时输出警告
             return;
         }
-        
+
         // 智能状态检查：只有在真正需要时才清空
         if (!this.isPlaying) {
             return;
         }
-        
+
         if (!this.playbackNode) {
             return;
         }
-        
+
         // 更新统计信息
         this.lastClearTime = now;
         this.clearCount++;
-        
+
         // 性能优化：减少日志输出
         if (this.clearCount % 10 === 0) {
             console.log('[AudioPlayer] 🔴 执行智能音频队列清空 #' + this.clearCount);
         }
-        
+
         // 发送清空指令
         this.playbackNode.port.postMessage({ type: 'clear' });
-        
+
         // 立即更新播放状态
         this.isPlaying = false;
-        
+
         // 如果清空次数过多，记录警告
         if (this.clearCount > this.MAX_CLEAR_COUNT) {
             console.warn('[AudioPlayer] 🚨 清空次数过多，可能存在异常:', this.clearCount);
@@ -269,7 +306,7 @@ export class AudioPlayer {
     // 强制重置播放器 - 用于彻底的音频打断（优化版本）
     forceReset(): void {
         const now = Date.now();
-        
+
         // 智能频率检查：防止过于频繁的重置操作
         if (now - this.lastResetTime < this.MIN_RESET_INTERVAL) {
             console.warn('[AudioPlayer] ⚠️ 强制重置操作过于频繁，跳过本次操作');
@@ -282,17 +319,17 @@ export class AudioPlayer {
             });
             return;
         }
-        
+
         // 智能状态检查：只有在真正需要时才重置
         if (!this.isPlaying && !this.playbackNode) {
             console.log('[AudioPlayer] 🔍 播放器未活跃且未初始化，跳过强制重置');
             return;
         }
-        
+
         // 更新统计信息
         this.lastResetTime = now;
         this.resetCount++;
-        
+
         console.log('[AudioPlayer] 🔴 执行智能强制重置播放器');
         console.log('[AudioPlayer] 🚨 强制重置影响分析:');
         console.log('  - AudioWorklet时序基准将丢失');
@@ -304,16 +341,16 @@ export class AudioPlayer {
             isPlaying: this.isPlaying,
             hasWorklet: !!this.playbackNode
         });
-        
+
         if (this.playbackNode) {
             console.log('[AudioPlayer] 🔴 发送重置指令到AudioWorklet');
             this.playbackNode.port.postMessage({ type: 'reset' });
         }
-        
+
         // 重置本地状态
         this.isPlaying = false;
         console.log('[AudioPlayer] 🔴 播放器已强制重置');
-        
+
         // 如果重置次数过多，记录警告
         if (this.resetCount > this.MAX_RESET_COUNT) {
             console.warn('[AudioPlayer] 🚨 重置次数过多，可能存在异常:', {
@@ -347,7 +384,7 @@ export class AudioPlayer {
             lastResetTime: this.lastResetTime
         };
     }
-    
+
     // 重置统计信息（用于调试或重置异常状态）
     resetStatistics(): void {
         this.clearCount = 0;
@@ -368,10 +405,10 @@ export class AudioPlayer {
             clearCount: this.clearCount,
             resetCount: this.resetCount
         });
-        
+
         // 先清空队列
         this.clearQueue();
-        
+
         if (this.playbackNode) {
             try {
                 console.log('[AudioPlayer] 🔴 断开AudioWorklet节点连接');
@@ -392,7 +429,7 @@ export class AudioPlayer {
 
         this.audioContext = null;
         this.isPlaying = false;
-        
+
         console.log('[AudioPlayer] 🔴 停止播放完成 - 全部资源已清理');
         console.log('[AudioPlayer] 🔴 停止后状态:', {
             isPlaying: this.isPlaying,

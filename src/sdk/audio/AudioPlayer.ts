@@ -19,12 +19,20 @@ export class AudioPlayer {
     private readonly MAX_RESET_COUNT: number = 3; // 最大连续重置次数
 
     private debugMode: boolean = true; // 临时启用调试模式以诊断音频问题
+    private autoGain: number = 1.0; // 自动增益，默认1.0（不增益）
+    private chunkCount: number = 0; // 已处理的音频块数量
 
     constructor() {
         this.initAudioContext();
         // 随机化处理器名称，允许多个 player 共存
         this.processorName = `pcm-player-processor-` + Math.random().toString(36).slice(2) + Date.now().toString(36);
         console.log('[AudioPlayer] 🔊 音频播放器已创建，调试模式已启用');
+    }
+
+    // 设置自动增益
+    public setAutoGain(gain: number): void {
+        this.autoGain = Math.max(0.1, Math.min(10.0, gain)); // 限制在0.1-10.0之间
+        console.log('[AudioPlayer] 🔊 设置音频增益:', this.autoGain);
     }
 
     // 设置调试模式
@@ -78,7 +86,39 @@ export class AudioPlayer {
                         if (data.type === 'push' && data.samples instanceof Float32Array) {
                             // 将一帧样本入队
                             this.totalSamplesReceived += data.samples.length;
-                            this.queue.push(data.samples);
+                            
+                            // 平滑处理：如果队列中有数据，对新数据的开头应用淡入，避免突变
+                            if (this.queue.length > 0) {
+                                const lastBuffer = this.queue[this.queue.length - 1];
+                                const lastSampleValue = lastBuffer[lastBuffer.length - 1];
+                                const firstSampleValue = data.samples[0];
+                                const diff = Math.abs(firstSampleValue - lastSampleValue);
+                                
+                                // 如果相邻样本差值过大，应用平滑过渡
+                                if (diff > 0.1) {  // 阈值0.1（归一化范围[-1,1]）
+                                    const smoothLength = Math.min(16, data.samples.length);
+                                    const newSamples = new Float32Array(data.samples);
+                                    for (let i = 0; i < smoothLength; i++) {
+                                        const ratio = i / smoothLength;
+                                        newSamples[i] = lastSampleValue * (1 - ratio) + data.samples[i] * ratio;
+                                    }
+                                    this.queue.push(newSamples);
+                                    
+                                    if (this.debugMode && diff > 0.3) {
+                                        console.warn('[AudioWorklet] 🔧 检测到样本跳变:', {
+                                            diff: diff.toFixed(3),
+                                            lastSample: lastSampleValue.toFixed(3),
+                                            firstSample: firstSampleValue.toFixed(3),
+                                            appliedSmoothing: true
+                                        });
+                                    }
+                                } else {
+                                    this.queue.push(data.samples);
+                                }
+                            } else {
+                                this.queue.push(data.samples);
+                            }
+                            
                             this.isPlaying = true;
                             
                             // 每秒输出一次状态日志
@@ -223,13 +263,23 @@ export class AudioPlayer {
         await this.ensurePlaybackWorklet();
 
         try {
-            // 调试：记录音频数据到达情况
+            // 调试：记录音频数据到达情况和质量检查
             const now = performance.now();
+
+            // 检查PCM数据的前几个样本，看是否有异常值
+            const dataView = new DataView(audioData.buffer, audioData.byteOffset, Math.min(20, audioData.byteLength));
+            const firstSamples = [];
+            for (let i = 0; i < Math.min(5, Math.floor(audioData.length / 2)); i++) {
+                firstSamples.push(dataView.getInt16(i * 2, true));
+            }
+
             if (this.debugMode) {
                 console.log('[AudioPlayer] 🎵 收到音频数据:', {
                     dataSize: audioData.length,
                     timestamp: now.toFixed(2),
-                    isPlaying: this.isPlaying
+                    isPlaying: this.isPlaying,
+                    firstSamples: firstSamples,
+                    hasExtremeValues: firstSamples.some(s => Math.abs(s) > 30000)
                 });
             }
 
@@ -238,12 +288,42 @@ export class AudioPlayer {
                 console.warn('[AudioPlayer] ⚠️ PCM数据长度异常:', audioData.length);
             }
 
-            const floatData = pcm16ToFloat32(audioData);
+            let floatData = pcm16ToFloat32(audioData);
 
             // 性能优化：移除详细的Float32数据质量检查，仅做基本验证
             if (floatData.length === 0) {
                 console.warn('[AudioPlayer] ⚠️ 转换后的Float32数据为空');
                 return;
+            }
+
+            // 音量检测和自动增益
+            this.chunkCount++;
+            const sumSquared = floatData.reduce((sum, sample) => sum + sample * sample, 0);
+            const rms = Math.sqrt(sumSquared / floatData.length);
+            const avgAmplitude = floatData.reduce((sum, sample) => sum + Math.abs(sample), 0) / floatData.length;
+
+            if (this.debugMode && this.chunkCount % 10 === 0) {
+                console.log('[AudioPlayer] 📊 音量分析 (每10个chunk):', {
+                    chunkCount: this.chunkCount,
+                    rms: rms.toFixed(4),
+                    avgAmplitude: avgAmplitude.toFixed(4),
+                    maxSample: Math.max(...Array.from(floatData).map(Math.abs)).toFixed(4),
+                    currentGain: this.autoGain
+                });
+            }
+
+            // 应用增益（如果设置了）
+            if (this.autoGain !== 1.0) {
+                const gainedData = new Float32Array(floatData.length);
+                for (let i = 0; i < floatData.length; i++) {
+                    // 应用增益并限制在[-1, 1]范围内
+                    gainedData[i] = Math.max(-1, Math.min(1, floatData[i] * this.autoGain));
+                }
+                floatData = gainedData;
+
+                if (this.debugMode && this.chunkCount === 1) {
+                    console.log('[AudioPlayer] 🔊 应用音频增益:', this.autoGain);
+                }
             }
 
             // 将样本推送到播放队列，使用可转移对象减少拷贝

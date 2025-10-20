@@ -654,27 +654,11 @@ export const App = () => {
             const binaryAudioData = payload as any;
             if (!binaryAudioData || !binaryAudioData.audioData) return;
 
-            console.log('[APP] 🎵 收到二进制音频数据，准备播放 - 打断验证日志');
-            
-            // 🔧 修复：增强音频打断检测逻辑
-            if (audioPlayerRef.current) {
-              const queueStatus = audioPlayerRef.current.getQueueStatus();
-              console.log('[APP] 🔴 音频播放器状态检查:', queueStatus);
-              
-              if (queueStatus.isPlaying) {
-                console.log('[APP] 🔴 检测到正在播放音频，执行音频打断');
-                console.log('[APP] 🔴 调用clearQueue清空音频队列');
-                audioPlayerRef.current.clearQueue();
-                
-                // 额外保险：延迟后再次确认清空
-                setTimeout(() => {
-                  if (audioPlayerRef.current && audioPlayerRef.current.isPlaybackActive) {
-                    console.log('[APP] 🔴 延迟检查发现播放器仍然活跃，执行强制重置');
-                    audioPlayerRef.current.forceReset();
-                  }
-                }, 50);
-              }
-            }
+            console.log('[APP] 🎵 收到二进制音频数据，准备播放');
+
+            // ⚠️ 移除错误的自动打断逻辑
+            // 流式音频应该连续推送到队列，而不是每次都清空
+            // 只有在特定事件（如 output_audio_buffer.started）时才应该清空队列
 
             // ========== 响应延迟计算（二进制协议优先） ==========
             // 只有在性能监控开启时才执行
@@ -699,10 +683,10 @@ export const App = () => {
                 outputIndex: binaryAudioData.outputIndex,
                 contentIndex: binaryAudioData.contentIndex
               });
-              
+
               // 二进制音频数据可能需要Opus解码
               const audioData = binaryAudioData.audioData;
-              
+
               // 确保有音频数据
               if (!audioData || audioData.length === 0) {
                 console.warn('[APP] 没有有效的音频数据，跳过播放');
@@ -727,7 +711,7 @@ export const App = () => {
 
               let pcmBytes: Uint8Array;
               let decodingMethod = '';
-              
+
               // 尝试Opus解码（二进制数据很可能仍然是Opus编码的）
               try {
                 console.debug('[APP] 🎵 尝试对二进制音频数据进行Opus解码...');
@@ -736,7 +720,7 @@ export const App = () => {
                   pcmBytes = decoded;
                   decodingMethod = 'opus_decoded';
                   console.debug('[APP] ✅ 二进制Opus解码成功，PCM数据大小:', pcmBytes.length);
-                  
+
                   // 验证解码后的PCM数据特征
                   if (pcmBytes.length > 0) {
                     const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
@@ -756,7 +740,7 @@ export const App = () => {
                 console.warn('[APP] ❌ 二进制Opus解码失败，假设数据已经是PCM格式:', opusError);
                 pcmBytes = audioData;
                 decodingMethod = 'direct_pcm';
-                
+
                 // 验证直接作为PCM的数据特征
                 if (pcmBytes.length >= 4) {
                   const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
@@ -845,7 +829,7 @@ export const App = () => {
             try {
               // 直接使用传统的JSON协议处理音频数据
               const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
-              
+
               // 调试：检查JSON协议的原始音频数据格式
               const opusSlice = Array.from(opusBytes.slice(0, 16)) as number[];
               const opusSlice100 = Array.from(opusBytes.slice(0, 100)) as number[];
@@ -862,10 +846,10 @@ export const App = () => {
                 maxByteValue: Math.max(...opusSlice100),
                 avgByteValue: opusSlice100.reduce((a: number, b: number) => a + b, 0) / 100
               });
-              
+
               let pcmBytes: Uint8Array;
               let decodingMethod = '';
-              
+
               // 尝试Opus解码
               try {
                 console.debug('[APP] 🎵 尝试对JSON音频数据进行Opus解码...');
@@ -874,7 +858,7 @@ export const App = () => {
                   pcmBytes = decoded;
                   decodingMethod = 'opus_decoded';
                   console.debug('[APP] ✅ JSON Opus解码成功，PCM数据大小:', pcmBytes.length);
-                  
+
                   // 验证解码后的PCM数据特征
                   if (pcmBytes.length > 0) {
                     const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
@@ -894,7 +878,7 @@ export const App = () => {
                 console.warn('[APP] ❌ JSON Opus解码失败，使用原始数据:', opusError);
                 pcmBytes = opusBytes;
                 decodingMethod = 'direct_pcm';
-                
+
                 // 验证直接作为PCM的数据特征
                 if (pcmBytes.length >= 4) {
                   const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
@@ -935,7 +919,7 @@ export const App = () => {
                   };
                 })() : null
               });
-              
+
               // 确保有音频数据
               if (!pcmBytes || pcmBytes.length === 0) {
                 console.warn('[APP] 没有有效的音频数据，跳过播放');
@@ -970,7 +954,7 @@ export const App = () => {
               sessionId: startedPayload.session_id,
               item_id: startedPayload.item_id
             });
-            
+
             // 确保AudioPlayer实例已准备好
             if (!audioPlayerRef.current) {
               audioPlayerRef.current = new AudioPlayer();
@@ -979,7 +963,7 @@ export const App = () => {
               // 🔍 诊断：检查是否存在音频流重叠
               const queueStatus = audioPlayerRef.current.getQueueStatus();
               const potentialOverlap = queueStatus.isPlaying && (now - queueStatus.lastClearTime) < 50;
-              
+
               console.log('[APP] 🔍 音频流重叠检测:', {
                 isPlaying: queueStatus.isPlaying,
                 timeSinceLastClear: now - queueStatus.lastClearTime,
@@ -987,7 +971,7 @@ export const App = () => {
                 potentialOverlap,
                 action: potentialOverlap ? 'force_reset' : 'clear_queue'
               });
-              
+
               if (potentialOverlap) {
                 // 如果检测到重叠，使用强制重置
                 audioPlayerRef.current.forceReset();
@@ -1012,7 +996,7 @@ export const App = () => {
               sessionId: stoppedPayload.session_id,
               item_id: stoppedPayload.item_id
             });
-            
+
             // 正确的停止处理：调用stopPlayback()并清理AudioPlayer实例
             if (audioPlayerRef.current) {
               console.log('[APP] 🔴 调用stopPlayback()停止音频播放');

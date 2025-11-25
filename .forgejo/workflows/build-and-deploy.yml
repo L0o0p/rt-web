@@ -2,10 +2,11 @@ name: Build and Deploy RealTime TS App
 
 on:
   push:
-    branches: [ main, master, dev ]
+    branches: [ main ]   # 只监听 main
 
 env:
   REGISTRY: harbor.luxhub.top:2097
+  IMAGE_NAME: realtime-ts/realtime-ts-dev
 
 jobs:
   build-and-deploy:
@@ -21,28 +22,14 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ secrets.HARBOR_USERNAME }}
         password: ${{ secrets.HARBOR_PASSWORD }}
-        
-    - name: Set image name and tag based on branch
-      id: set-image
+
+    - name: Prepare image tags
+      id: meta
       run: |
-        if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
-          echo "image_name=realtime-ts/realtime-ts-prod" >> $GITHUB_OUTPUT
-        elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-          echo "image_name=realtime-ts/realtime-ts-dev" >> $GITHUB_OUTPUT
-        else
-          echo "image_name=realtime-ts/realtime-ts" >> $GITHUB_OUTPUT
-        fi
         echo "sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
         echo "latest_tag=latest" >> $GITHUB_OUTPUT
 
-    # - name: Set up Docker Buildx
-    # uses: docker/setup-buildx-action@v3
-    # with:
-    #   driver-opts: |
-    #     image=moby/buildkit:latest
-
-    - name: Build and push Docker image
-      if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' && github.ref != 'refs/heads/dev'
+    - name: Build and Push Docker Image
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -50,45 +37,7 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: |
-          ${{ env.REGISTRY }}/${{ steps.set-image.outputs.image_name }}:${{ steps.set-image.outputs.sha_tag }}
-          ${{ env.REGISTRY }}/${{ steps.set-image.outputs.image_name }}:${{ steps.set-image.outputs.latest_tag }}
-        # cache-from: type=gha
-        # cache-to: type=gha,mode=max
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
         build-args: |
           DOCKER_BUILDKIT=1
-
-    - name: Trigger Production Webhook (Master/Main)
-      if: success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-      uses: fjogeleit/http-request-action@v1
-      with:
-        url: ${{ secrets.PRODUCTION_WEBHOOK_URL }}
-        method: 'POST'
-        timeout: 30000
-        retry: 3
-        retryWait: 5000
-        customHeaders: '{"Content-Type": "application/json"}'
-        data: |
-          {
-            "image": "${{ env.REGISTRY }}/${{ steps.set-image.outputs.image_name }}:${{ steps.set-image.outputs.sha_tag }}",
-            "environment": "production",
-            "branch": "${{ github.ref_name }}",
-            "commit": "${{ github.sha }}"
-          }
-
-    - name: Trigger Testing Webhook (Dev)
-      if: success() && github.ref == 'refs/heads/dev'
-      uses: fjogeleit/http-request-action@v1
-      with:
-        url: ${{ secrets.TESTING_WEBHOOK_URL }}
-        method: 'POST'
-        timeout: 30000
-        retry: 3
-        retryWait: 5000
-        customHeaders: '{"Content-Type": "application/json"}'
-        data: |
-          {
-            "image": "${{ env.REGISTRY }}/${{ steps.set-image.outputs.image_name }}:${{ steps.set-image.outputs.sha_tag }}",
-            "environment": "testing",
-            "branch": "dev",
-            "commit": "${{ github.sha }}"
-          }

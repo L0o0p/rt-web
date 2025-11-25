@@ -7,6 +7,7 @@ on:
 env:
   REGISTRY: harbor.luxhub.top:2097
   IMAGE_NAME: realtime-ts/realtime-ts-dev
+  PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
 
 jobs:
   build-and-deploy:
@@ -41,3 +42,14 @@ jobs:
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
         build-args: |
           DOCKER_BUILDKIT=1
+
+    - name: Notify Portainer
+      if: ${{ env.PORTAINER_WEBHOOK_URL }}
+      run: |
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          "${{ env.PORTAINER_WEBHOOK_URL }}" \
+          -d '{
+            "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}",
+            "tag": "${{ steps.meta.outputs.sha_tag }}"
+          }'

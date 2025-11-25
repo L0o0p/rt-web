@@ -2,7 +2,7 @@ name: Build and Deploy RealTime TS App
 
 on:
   push:
-    branches: [ main ]   # 只监听 main
+    branches: [ master ]   # 只监听 master
 
 env:
   REGISTRY: harbor.luxhub.top:2097

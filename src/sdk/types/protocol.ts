@@ -13,7 +13,7 @@
  */
 export const CONFIG = {
     // WebSocket 服务器地址，从环境变量读取
-    WEBSOCKET_URL: import.meta.env.VITE_WEBSOCKET_URL || 'wss://bjol.luxhub.top:29443/ws',
+    WEBSOCKET_URL: 'wss://agent-zh.vkcto.com:9440/ws',
 
     // 调试模式开关
     DEBUG_MODE: import.meta.env.VITE_DEBUG_MODE === 'true' || true,

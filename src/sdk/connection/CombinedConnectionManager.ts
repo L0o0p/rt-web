@@ -260,7 +260,7 @@ export class CombinedConnectionManager extends EventEmitter {
         }
         ],
         // "tools_endpoint":"https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/tools?deviceCode=7211",  
-        enable_search: false,
+        enable_search: true,
         signal_only: false,
         asr_language: "zh",
         timezone: "Asia/Shanghai",

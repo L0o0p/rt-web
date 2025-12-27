@@ -274,7 +274,7 @@ export class BinaryAudioAdapter {
    * 获取当前配置
    */
   public getConfig(): Readonly<AudioAdapterConfig> {
-    return { ...this.config };
+    return Object.freeze({ ...this.config });
   }
 
   /**
@@ -323,14 +323,14 @@ export class BinaryAudioAdapter {
     currentProtocol: AudioProtocolType;
     binaryAvailable: boolean;
     consecutiveFailures: number;
-    config: AudioAdapterConfig;
+    config: Readonly<AudioAdapterConfig>;
   } {
-    return {
+    return Object.freeze({
       currentProtocol: this.currentProtocol,
       binaryAvailable: this.isBinaryProtocolAvailable,
       consecutiveFailures: this.consecutiveFailures,
-      config: { ...this.config }
-    };
+      config: this.getConfig()
+    });
   }
 
   /**
@@ -366,7 +366,8 @@ export class BinaryAudioAdapter {
       (this.performanceMetrics.averageDecodeTime * (this.performanceMetrics.decodeOperations - 1) + duration) /
       this.performanceMetrics.decodeOperations;
 
-    if (this.config.enablePerformanceMonitoring) {
+    // 仅在启用监控且每100次操作输出一次日志，减少性能影响
+    if (this.config.enablePerformanceMonitoring && this.performanceMetrics.decodeOperations % 100 === 0) {
       console.debug('[BinaryAudioAdapter] 性能指标更新:', {
         operations: this.performanceMetrics.decodeOperations,
         successRate: (this.performanceMetrics.successfulDecodes / this.performanceMetrics.decodeOperations * 100).toFixed(1) + '%',
@@ -381,11 +382,8 @@ export class BinaryAudioAdapter {
    */
   private arrayBufferToBase64(buffer: ArrayBuffer): string {
     const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
+    // 使用更高效的二进制字符串创建方式
+    return btoa(String.fromCharCode.apply(null, bytes as unknown as number[]));
   }
 }
 

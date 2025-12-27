@@ -72,49 +72,49 @@ export class VoiceChatCore extends EventEmitter {
   }
 
   /**
-   * 发送已编码的音频数据
+   * 公共验证方法 - 检查是否可以发送数据
    */
-  public sendEncodedAudioData(audioData: Uint8Array): boolean {
-    // 检查输入数据是否为空
-    if (!audioData || audioData.length === 0) {
-      logger.warn('尝试发送空的音频数据，已阻止发送');
-      return false;
-    }
-
-    // 记录发送的音频数据信息
-    logger.debug(`准备发送音频数据: ${audioData.length} 字节`);
-
-    // 验证数据是否符合基本要求
-    if (audioData.length < 10) {
-      logger.warn('音频数据太短，可能无效，长度:', audioData.length);
-      return false;
+  private validateSendOperation(dataName: string, dataLength: number, minLength: number = 1): { valid: boolean; sessionId: string | null; error?: string } {
+    if (dataLength < minLength) {
+      return { valid: false, sessionId: null, error: `${dataName}数据太短或为空` };
     }
 
     if (this.isDestroyed) {
-      logger.warn('尝试向已销毁的实例发送音频数据');
-      return false;
+      return { valid: false, sessionId: null, error: '实例已销毁' };
     }
 
     if (!this.connectionManager.isConnected) {
-      logger.warn('WebSocket未连接，无法发送音频数据');
-      return false;
+      return { valid: false, sessionId: null, error: 'WebSocket未连接' };
     }
 
     if (!this.connectionManager.isSessionCreated) {
-      logger.warn('会话未创建，无法发送音频数据');
+      return { valid: false, sessionId: null, error: '会话未创建' };
+    }
+
+    const sessionId = this.connectionManager.currentSessionId;
+    if (!sessionId) {
+      return { valid: false, sessionId: null, error: '会话ID缺失' };
+    }
+
+    return { valid: true, sessionId };
+  }
+
+  /**
+   * 发送已编码的音频数据
+   */
+  public sendEncodedAudioData(audioData: Uint8Array): boolean {
+    const validation = this.validateSendOperation('音频', audioData.length, 10);
+    
+    if (!validation.valid) {
+      logger.warn(`尝试发送空的音频数据，已阻止发送: ${validation.error}`);
       return false;
     }
 
-    try {
-      // 获取会话ID
-      const sessionId = this.connectionManager.currentSessionId;
-      if (!sessionId) {
-        logger.warn('会话ID缺失，无法发送音频数据');
-        return false;
-      }
+    logger.debug(`准备发送音频数据: ${audioData.length} 字节`);
 
+    try {
       // 创建并发送二进制音频数据消息
-      const audioMessage = BinaryMessage.createAudioChunk(sessionId, audioData);
+      const audioMessage = BinaryMessage.createAudioChunk(validation.sessionId!, audioData);
       this.connectionManager.sendBinaryMessage(audioMessage);
 
       logger.debug(`发送已编码音频数据: ${audioData.length} 字节`);
@@ -179,53 +179,30 @@ export class VoiceChatCore extends EventEmitter {
    * @param protocolId 协议ID，默认为All
    */
   public sendImageData(imageData: Uint8Array, prompt?: string, protocolId?: ProtocolId): boolean {
-    // 检查输入数据是否为空
-    if (!imageData || imageData.length === 0) {
-      logger.warn('尝试发送空的图像数据，已阻止发送');
-      return false;
-    }
-
-    // 记录发送的图像数据信息
-    logger.debug(`准备发送图像数据: ${imageData.length} 字节`);
-
     // 验证图像大小（默认5MB限制）
-    const maxImageSize = 5 * 1024 * 1024; // 5MB
+    const maxImageSize = 5 * 1024 * 1024;
     if (imageData.length > maxImageSize) {
       logger.warn(`图像文件过大: ${imageData.length} 字节，最大限制: ${maxImageSize} 字节`);
       return false;
     }
 
-    if (this.isDestroyed) {
-      logger.warn('尝试向已销毁的实例发送图像数据');
+    const validation = this.validateSendOperation('图像', imageData.length);
+    if (!validation.valid) {
+      logger.warn(`尝试发送图像数据失败: ${validation.error}`);
       return false;
     }
 
-    if (!this.connectionManager.isConnected) {
-      logger.warn('WebSocket未连接，无法发送图像数据');
-      return false;
-    }
-
-    if (!this.connectionManager.isSessionCreated) {
-      logger.warn('会话未创建，无法发送图像数据');
-      return false;
-    }
+    logger.debug(`准备发送图像数据: ${imageData.length} 字节`);
 
     try {
-      // 获取会话ID
-      const sessionId = this.connectionManager.currentSessionId;
-      if (!sessionId) {
-        logger.warn('会话ID缺失，无法发送图像数据');
-        return false;
-      }
-
       // 使用提供的协议ID或默认为All(100)
       const finalProtocolId = protocolId || ProtocolId.All;
-
       const promptText = prompt || "";
-      logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节, 提示词: "${promptText}"`);
+      
+      logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${validation.sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节`);
 
-      // 创建并发送二进制图像数据消息（新的payload格式）
-      const imageMessage = BinaryMessage.createImageData(sessionId, imageData, promptText, finalProtocolId);
+      // 创建并发送二进制图像数据消息
+      const imageMessage = BinaryMessage.createImageData(validation.sessionId!, imageData, promptText, finalProtocolId);
 
       logger.info(`[IMAGE] 二进制消息已创建，头部信息 - 会话ID: ${imageMessage.header.sessionId}, 协议ID: ${imageMessage.header.protocolId}, 命令ID: ${imageMessage.header.commandId}, 总payload大小: ${imageMessage.payload.length} 字节`);
 

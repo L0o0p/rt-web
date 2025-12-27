@@ -15,6 +15,7 @@ export class Logger {
     private prefix: string;
     private level: LogLevel;
 
+    private static GLOBAL_MIN_LEVEL: LogLevel = 'debug'; // 可在运行时修改
     private static LOG_LEVELS: Record<LogLevel, number> = {
         debug: 0,
         info: 1,
@@ -27,8 +28,18 @@ export class Logger {
         this.level = options.level || 'info';
     }
 
+    /**
+     * 设置全局最小日志级别（生产环境可设为 'warn' 或 'error'）
+     */
+    public static setGlobalMinLevel(level: LogLevel): void {
+        Logger.GLOBAL_MIN_LEVEL = level;
+    }
+
     private shouldLog(level: LogLevel): boolean {
-        return Logger.LOG_LEVELS[level] >= Logger.LOG_LEVELS[this.level];
+        return Logger.LOG_LEVELS[level] >= Math.max(
+            Logger.LOG_LEVELS[this.level],
+            Logger.LOG_LEVELS[Logger.GLOBAL_MIN_LEVEL]
+        );
     }
 
     private formatMessage(message: string): string {

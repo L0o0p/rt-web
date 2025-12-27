@@ -67,6 +67,7 @@ export class AudioManager extends EventEmitter {
 
     private moduleConfig: AudioModuleConfig = {};
     private isProcessing: boolean = false;
+    private modelPreloaded: boolean = false;
 
     /**
      * 构造函数
@@ -79,6 +80,27 @@ export class AudioManager extends EventEmitter {
         this.player = player || null;
         this.setupRecorderEvents();
         logger.info('Initialized with event-driven architecture');
+    }
+
+    /**
+     * 预加载 VAD 模型（页面打开时调用，避免用户点击时等待）
+     * @returns Promise<void>
+     */
+    async preloadModel(): Promise<void> {
+        if (this.modelPreloaded) {
+            logger.info('VAD model already preloaded');
+            return;
+        }
+
+        try {
+            logger.info('Preloading VAD model...');
+            await this.recorder.preloadModel();
+            this.modelPreloaded = true;
+            logger.info('VAD model preloaded successfully');
+        } catch (error) {
+            logger.error('Failed to preload VAD model:', error);
+            // 预加载失败不阻塞，允许后续按需加载
+        }
     }
 
     /**

@@ -137,6 +137,23 @@ export const App = () => {
 
   useEffect(() => {
     realTime.current = new RealTime()
+    
+    // 页面打开时预加载 VAD 模型，避免用户点击时等待 WASM 加载
+    const preloadVADModel = async () => {
+      try {
+        console.log('[APP] 页面打开，预加载 VAD 模型...');
+        const audioManager = realTime.current?.getAudioManager();
+        if (audioManager) {
+          await audioManager.preloadModel();
+          console.log('[APP] VAD 模型预加载完成');
+        }
+      } catch (error) {
+        console.error('[APP] VAD 模型预加载失败:', error);
+        // 预加载失败不阻塞，后续按需加载
+      }
+    };
+    
+    preloadVADModel();
   }, [])
 
   // 响应速度监控相关状态

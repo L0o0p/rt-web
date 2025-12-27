@@ -36,7 +36,37 @@ export class AudioRecorder {
         autoGainControl: true
     };
 
+    // 模型预加载状态
+    private modelPreloaded: boolean = false;
+
     // 明确无需自定义初始化逻辑，移除空构造器
+
+    /**
+     * 预加载 VAD 模型（页面打开时调用，避免用户点击时等待 WASM 加载）
+     * @returns Promise<void>
+     */
+    async preloadModel(): Promise<void> {
+        if (this.modelPreloaded) {
+            console.log('[AudioRecorder] VAD 模型已预加载，跳过');
+            return;
+        }
+
+        const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+        if (!isIsolated) {
+            console.log('[AudioRecorder] 非跨域隔离环境，跳过模型预加载（按需加载）');
+            return;
+        }
+
+        try {
+            console.log('[AudioRecorder] 开始预加载 VAD 模型...');
+            await preloadModel();
+            this.modelPreloaded = true;
+            console.log('[AudioRecorder] VAD 模型预加载完成');
+        } catch (error) {
+            console.error('[AudioRecorder] VAD 模型预加载失败:', error);
+            // 预加载失败不阻塞，后续按需加载
+        }
+    }
 
     /**
      * 启用或禁用VAD功能
@@ -276,6 +306,15 @@ export class AudioRecorder {
         }
         // 清理引用
         this.vadTransform = null;
+        // 清理回溯缓冲
+        this.preSpeechBuffer = [];
+        this.needFlushPreBuffer = false;
+        // 清理回调函数引用，避免内存泄漏
+        this.onSpeechStartCallback = null;
+        this.onSpeechEndCallback = null;
+        this.onAudioDataCallback = null;
+        // 重置说话状态
+        this.isSpeaking = false;
     }
 }
 

@@ -33,11 +33,9 @@ export class CombinedConnectionManager extends EventEmitter {
   private websocket: WebSocket | null = null;
   private connectionAttempts: number = 0;
   private reconnectTimeout: number | null = null;
-  private heartbeatInterval: number | null = null;
 
   // 会话相关属性
   private sessionId: string | undefined = undefined;
-  private pingTimestamps: Array<{ id: number; timestamp: number }> = [];
   private defaultSessionConfig?: Partial<SessionConfigPayload>;
 
   // 消息解析器
@@ -191,12 +189,9 @@ export class CombinedConnectionManager extends EventEmitter {
       this.sessionId = this.generateSessionId();
     }
     this.createSession();
-    this.startHeartbeat();
   }
 
   private handleClose(event: CloseEvent): void {
-    this.stopHeartbeat();
-
     if (!event.wasClean && this.connectionAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
       this.connectionAttempts++;
       this.reconnectTimeout = window.setTimeout(() => {
@@ -299,39 +294,14 @@ export class CombinedConnectionManager extends EventEmitter {
   }
 
 
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-
-    this.heartbeatInterval = window.setInterval(() => {
-      if (this.websocket && this.websocket.readyState === WebSocket.OPEN && this.sessionId) {
-        const pingId = Date.now();
-        this.pingTimestamps.push({ id: pingId, timestamp: performance.now() });
-
-        if (this.pingTimestamps.length > 10) {
-          this.pingTimestamps.shift();
-        }
-
-        const pingMessage = BinaryMessage.createPing(this.sessionId);
-        this.sendBinaryMessage(pingMessage);
-      }
-    }, 10000);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-  }
-
   private cleanup(): void {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
 
-    this.stopHeartbeat();
-    this.pingTimestamps = [];
+    // 清理 websocket 引用，避免内存泄漏
+    this.websocket = null;
   }
 
   // Getters

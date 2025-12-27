@@ -68,6 +68,7 @@ export class VoiceChatCore extends EventEmitter {
     this.disconnect();
     this.isDestroyed = true;
     this.removeAllListeners();
+    this.connectionManager = null as any;
   }
 
   /**

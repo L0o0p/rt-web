@@ -26,6 +26,8 @@ import type {
 
 import { VisionTestPanel } from './components/VisionTestPanel';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
+import { useReminderHandler } from './hooks/useReminderHandler';
+import { ReminderPanel } from './components/ReminderPanel';
 
 // 趋势图组件
 const TrendChart = React.memo(({ responseMetrics }: {
@@ -135,9 +137,12 @@ export const App = () => {
 
   const realTime = useRef<any>()
 
+  // Reminder 处理 Hook
+  const { handleReminderCall } = useReminderHandler();
+
   useEffect(() => {
     realTime.current = new RealTime()
-    
+
     // 页面打开时预加载 VAD 模型，避免用户点击时等待 WASM 加载
     const preloadVADModel = async () => {
       try {
@@ -152,7 +157,7 @@ export const App = () => {
         // 预加载失败不阻塞，后续按需加载
       }
     };
-    
+
     preloadVADModel();
   }, [])
 
@@ -1046,6 +1051,43 @@ export const App = () => {
             break;
           }
 
+          case 'response.function_call_arguments.done': {
+            // 处理 function_call_arguments.done 事件，识别 reminder 工具调用
+            const functionCallPayload = payload as any;
+            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+
+            // 根据实际日志，字段名是 function_name 而不是 function.name
+            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
+              console.log('[Reminder] ✅ 识别到 reminder 工具调用:', functionCallPayload);
+              try {
+                const args = JSON.parse(functionCallPayload.arguments || '{}');
+                console.log('[Reminder] ✅ 解析参数:', args);
+                handleReminderCall(args);
+              } catch (error) {
+                console.error('[Reminder] ❌ 参数解析失败:', error);
+              }
+            }
+            break;
+          }
+
+          case 'response.function_call.done': {
+            // 处理 function_call.done 事件，作为备用方案
+            const functionCallPayload = payload as any;
+            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+
+            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
+              console.log('[Reminder] ✅ 识别到 reminder 工具调用 (function_call.done):', functionCallPayload);
+              try {
+                const args = JSON.parse(functionCallPayload.arguments || '{}');
+                console.log('[Reminder] ✅ 解析参数:', args);
+                handleReminderCall(args);
+              } catch (error) {
+                console.error('[Reminder] ❌ 参数解析失败:', error);
+              }
+            }
+            break;
+          }
+
           default: {
             // 通用事件监听，用于调试
             if (eventName.includes('text') || eventName.includes('response.created') || eventName.includes('cancel') || eventName.includes('cleared') || eventName.includes('truncated')) {
@@ -1063,6 +1105,13 @@ export const App = () => {
         const handler = createEventHandler(eventName);
         handlers.set(eventName, handler);
         voiceChatCore.on(eventName, handler);
+      });
+
+      // 添加通用事件监听器，用于调试所有收到的事件
+      voiceChatCore.on('*', (eventName: string, payload: any) => {
+        if (eventName.includes('function_call') || eventName.includes('reminder')) {
+          console.log('[DEBUG] 🔔 收到相关事件:', eventName, JSON.stringify(payload).substring(0, 200));
+        }
       });
 
 
@@ -1383,6 +1432,9 @@ export const App = () => {
 
       {/* PWA安装提示 */}
       <PWAInstallPrompt />
+
+      {/* 提醒面板 */}
+      <ReminderPanel />
     </div>
   )
 }

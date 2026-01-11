@@ -117,6 +117,7 @@ export const App = () => {
   const [isUserSpeaking, setIsUserSpeaking] = useAtom(isUserSpeakingAtom)
   const [speechDetected, setSpeechDetected] = useState(false);
   const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
+  const [talkHint, setTalkHint] = useState<string>(''); // 移动端点击“开始对话”无反馈时用于提示原因
 
   const [vadThreshold, setVadThreshold] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
@@ -280,6 +281,7 @@ export const App = () => {
     // console.debug("toggleVadProcessing called, isUserSpeaking:", isUserSpeaking);
     if (!audioManagerRef.current) {
       // console.debug("No audioManagerRef, returning");
+      setTalkHint('音频未就绪，请稍等 1s 再试');
       return;
     }
 
@@ -338,9 +340,11 @@ export const App = () => {
 
         // console.debug("[APP] VAD audio processing started");
         setIsUserSpeaking(true);
+        setTalkHint('');
 
-      } catch {
-        // suppressed
+      } catch (error) {
+        console.error('[APP] 启动麦克风/对话失败:', error);
+        setTalkHint('启动失败：请检查麦克风权限/HTTPS/静音模式');
       }
     } else {
       // console.debug("[APP] Stopping VAD processing");
@@ -362,9 +366,11 @@ export const App = () => {
         setIsUserSpeaking(false);
         setSpeechDetected(false);
         setSpeechSegmentCount(0);
+        setTalkHint('');
 
       } catch (error) {
         console.error('[APP] Error stopping VAD processing:', error);
+        setTalkHint('停止失败：请刷新重试');
       }
     }
   }, [isUserSpeaking, vadThreshold, setIsUserSpeaking]);
@@ -1193,6 +1199,30 @@ export const App = () => {
         return;
       }
 
+      // 拍完照自动下载刚刚的图片（最佳努力：某些浏览器策略可能会拦截非用户手势下载）
+      try {
+        const ext = (() => {
+          switch (blob.type) {
+            case 'image/jpeg': return 'jpg';
+            case 'image/png': return 'png';
+            case 'image/webp': return 'webp';
+            default: return 'jpg';
+          }
+        })();
+        const filename = `photo-${Date.now()}.${ext}`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore
+      }
+
       console.log('[CAMERA] 收到捕获的照片，大小:', blob.size, '字节');
 
       // 检查连接状态
@@ -1390,7 +1420,10 @@ export const App = () => {
           <LiveAudioVisualizerComponent pause={!isUserSpeaking} />
           <div
             className={styles.squadyUI}
-            onClick={record}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              record();
+            }}
           >
             <img src={squadyLogo} alt="squady" />
           </div>
@@ -1399,7 +1432,7 @@ export const App = () => {
             <StatusPoint />
           </div>
           <div className={styles.squadySubtext}>
-            {isUserSpeaking ? '正在聆听...' : '点击开始对话'}
+            {talkHint || (isUserSpeaking ? '正在聆听...' : '点击开始对话')}
           </div>
         </div>
 

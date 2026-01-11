@@ -104,7 +104,7 @@ export class VoiceChatCore extends EventEmitter {
    */
   public sendEncodedAudioData(audioData: Uint8Array): boolean {
     const validation = this.validateSendOperation('音频', audioData.length, 10);
-    
+
     if (!validation.valid) {
       logger.warn(`尝试发送空的音频数据，已阻止发送: ${validation.error}`);
       return false;
@@ -168,8 +168,19 @@ export class VoiceChatCore extends EventEmitter {
       throw new Error('VoiceChatCore instance has been destroyed');
     }
 
-    // 重新创建会话
+    // 复用当前 sessionId 重新发 session_config（不会强制新 sessionId）
     this.connectionManager.recreateSession(undefined, config);
+  }
+
+  /**
+   * 开始全新会话（生成新 sessionId）
+   * 某些服务端在 StopInput 后不允许继续输入时可用，但默认不要用。
+   */
+  public startNewSession(config?: Partial<SessionConfigPayload>): void {
+    if (this.isDestroyed) {
+      throw new Error('VoiceChatCore instance has been destroyed');
+    }
+    this.connectionManager.startNewSession(config);
   }
 
   /**
@@ -199,7 +210,7 @@ export class VoiceChatCore extends EventEmitter {
       const finalProtocolId = protocolId || ProtocolId.All;
       // 默认提示词：避免空prompt导致服务端/模型不触发分析
       const promptText = (prompt && prompt.trim().length > 0) ? prompt : "请描述我前面有什么";
-      
+
       logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${validation.sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节`);
 
       // 创建并发送二进制图像数据消息

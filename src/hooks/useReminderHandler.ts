@@ -31,7 +31,7 @@ export const useReminderHandler = () => {
     const clearTimer = useCallback((id: string) => {
         const timerId = timerRefs.current.get(id);
         if (timerId) {
-            clearInterval(timerId);
+            window.clearInterval(timerId);
             timerRefs.current.delete(id);
         }
     }, []);
@@ -40,7 +40,7 @@ export const useReminderHandler = () => {
     useEffect(() => {
         return () => {
             timerRefs.current.forEach((timerId) => {
-                clearInterval(timerId);
+                window.clearInterval(timerId);
             });
             timerRefs.current.clear();
         };
@@ -63,7 +63,7 @@ export const useReminderHandler = () => {
         console.log('[Reminder] 新增提醒:', reminder);
 
         // 创建倒计时定时器
-        const timer = setInterval(() => {
+        const timer = window.setInterval(() => {
             setReminders(prev => prev.map(r =>
                 r.id === reminderId ? { ...r, countdown: calculateCountdown(r.startAt) } : r
             ));

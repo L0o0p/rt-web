@@ -75,7 +75,7 @@ export class AudioPlayer {
                     this.current = null;
                     this.isPlaying = false;
                     this.clearCount = 0; // 用于调试的清空计数器
-                    this.debugMode = true; // 临时启用调试模式以诊断音频问题
+                    this.debugMode = false; // 默认关闭；需要诊断时再通过 setDebugMode 开启
                     this.lastLogTime = 0;
                     this.underrunCount = 0; // 缓冲区欠载计数
                     this.lastSample = 0; // 记录最后一个样本值，用于平滑过渡
@@ -178,26 +178,31 @@ export class AudioPlayer {
                                 this.current = this.queue.shift();
                                 this.readIndex = 0;
                             } else {
-                                // 缓冲区欠载 - 使用平滑淡出而不是突然填充静音
-                                this.underrunCount++;
-                                if (this.debugMode && this.underrunCount % 10 === 1) {
-                                    console.warn('[AudioWorklet] ⚠️ 缓冲区欠载 #' + this.underrunCount + '，队列为空，使用平滑淡出');
-                                }
-                                
-                                // 使用淡出效果平滑过渡到静音，避免爆音
+                                // 队列为空：如果刚刚在播放，则做一次短淡出；否则直接输出静音（idle）
                                 const remainingSamples = framesNeeded - offset;
-                                const fadeOutLength = Math.min(remainingSamples, 64); // 最多64个样本的淡出
-                                
-                                for (let i = 0; i < fadeOutLength; i++) {
-                                    const fadeRatio = 1.0 - (i / fadeOutLength);
-                                    channel[offset + i] = this.lastSample * fadeRatio;
+                                const wasPlaying = this.isPlaying;
+                                this.isPlaying = false;
+
+                                if (wasPlaying) {
+                                    this.underrunCount++;
+                                    if (this.debugMode && this.underrunCount % 10 === 1) {
+                                        console.warn('[AudioWorklet] ⚠️ 缓冲区欠载 #' + this.underrunCount + '，队列为空，使用平滑淡出');
+                                    }
+
+                                    const fadeOutLength = Math.min(remainingSamples, 64); // 最多64个样本的淡出
+                                    for (let i = 0; i < fadeOutLength; i++) {
+                                        const fadeRatio = 1.0 - (i / fadeOutLength);
+                                        channel[offset + i] = this.lastSample * fadeRatio;
+                                    }
+                                    for (let i = fadeOutLength; i < remainingSamples; i++) {
+                                        channel[offset + i] = 0;
+                                    }
+                                } else {
+                                    for (let i = 0; i < remainingSamples; i++) {
+                                        channel[offset + i] = 0;
+                                    }
                                 }
-                                
-                                // 剩余部分填充静音
-                                for (let i = fadeOutLength; i < remainingSamples; i++) {
-                                    channel[offset + i] = 0;
-                                }
-                                
+
                                 this.lastSample = 0; // 重置最后样本值
                                 break;
                             }

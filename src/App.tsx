@@ -349,16 +349,10 @@ export const App = () => {
         // 获取VoiceChatCore实例
         const voiceChatCore = realTime.current?.getVoiceChatCore();
 
-        // 1. 发送StopInput指令到服务器，告知停止音频输入
-        if (voiceChatCore && voiceChatCore.isConnected && voiceChatCore.currentSessionId) {
-          const connectionManager = voiceChatCore.getConnectionManager();
-          const { ClientBinaryMessage } = await import('./sdk/protocol/ClientProtocol');
-          const stopInputMessage = ClientBinaryMessage.createStopInput(voiceChatCore.currentSessionId);
-          connectionManager.sendBinaryMessage(stopInputMessage);
-          console.log('[APP] StopInput command sent to server');
-        }
+        // 不发送 StopInput：它更像“结束输入/结束会话”，会导致同一个 sessionId 无法再次开始。
+        // 停止对话只需要停本地采集即可（AudioManager.stop + enabled=false）。
 
-        // 2. 停止并禁用AudioManager，停止音频采集和发送
+        // 停止并禁用AudioManager，停止音频采集和发送
         await audioManagerRef.current
           .stop()
           .then(manager => manager.configure({ enabled: false }));
@@ -1023,12 +1017,18 @@ export const App = () => {
               item_id: stoppedPayload.item_id
             });
 
-            // 正确的停止处理：调用stopPlayback()并清理AudioPlayer实例
+            // 停止处理：如果下行播放开关仍为开启，则不要把实例置空（否则后续音频会进入“未就绪”状态）
             if (audioPlayerRef.current) {
               console.log('[APP] 🔴 调用stopPlayback()停止音频播放');
               audioPlayerRef.current.stopPlayback();
-              audioPlayerRef.current = null;
-              console.log('[APP] 🔴 AudioPlayer实例已清理');
+              if (!isPlayingDownstreamAudioRef.current) {
+                audioPlayerRef.current = null;
+                console.log('[APP] 🔴 AudioPlayer实例已清理（下行播放已关闭）');
+              } else {
+                // 保持实例，等待下一段音频流
+                audioPlayerRef.current.clearQueue();
+                console.log('[APP] 🔴 AudioPlayer已停止并清空队列（保持实例以便后续继续播放）');
+              }
             } else {
               console.log('[APP] 🔴 AudioPlayer实例已为空，无需清理');
             }

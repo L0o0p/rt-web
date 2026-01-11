@@ -1084,7 +1084,21 @@ export const App = () => {
               try {
                 const args = JSON.parse(functionCallPayload.arguments || '{}');
                 console.log('[Reminder] ✅ 解析参数:', args);
-                handleReminderCall(args);
+                const reminder = handleReminderCall(args);
+
+                // ✅ 本地工具执行完毕后回传 function_call_output（闭环）
+                if (typeof callId === 'string' && callId.length > 0) {
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    reminderId: reminder?.id,
+                    content: reminder?.content,
+                    startAt: reminder?.startAt,
+                  });
+                } else {
+                  console.warn('[Reminder] call_id 为空，跳过 function_call_output 回传');
+                }
               } catch (error) {
                 console.error('[Reminder] ❌ 参数解析失败:', error);
               }
@@ -1133,7 +1147,21 @@ export const App = () => {
               try {
                 const args = JSON.parse(functionCallPayload.arguments || '{}');
                 console.log('[Reminder] ✅ 解析参数:', args);
-                handleReminderCall(args);
+                const reminder = handleReminderCall(args);
+
+                // ✅ 本地工具执行完毕后回传 function_call_output（闭环）
+                if (typeof callId === 'string' && callId.length > 0) {
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    reminderId: reminder?.id,
+                    content: reminder?.content,
+                    startAt: reminder?.startAt,
+                  });
+                } else {
+                  console.warn('[Reminder] call_id 为空，跳过 function_call_output 回传');
+                }
               } catch (error) {
                 console.error('[Reminder] ❌ 参数解析失败:', error);
               }

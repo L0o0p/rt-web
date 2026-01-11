@@ -1,7 +1,7 @@
 import { CONFIG } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
 import { CommandId, ProtocolId } from '../protocol/ClientProtocol';
-import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
   BinaryMessageParser,
@@ -152,6 +152,28 @@ export class CombinedConnectionManager extends EventEmitter {
     } else {
       logger.error('WebSocket未连接，无法发送消息');
     }
+  }
+
+  /**
+   * 工具调用闭环：把本地执行结果回传给服务端（conversation.item.create + function_call_output）
+   * 备注：output 必须是字符串；这里对对象做 JSON.stringify
+   */
+  sendFunctionCallOutput(callId: string, output: unknown): void {
+    if (!callId) {
+      logger.error('[ToolCall] callId 为空，无法回传 function_call_output');
+      return;
+    }
+
+    const payload: ConversationItemCreatePayload = {
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: callId,
+        output: typeof output === 'string' ? output : JSON.stringify(output ?? {}),
+      }
+    };
+
+    this.sendTextMessage(payload, CommandId.Result);
   }
 
   /**

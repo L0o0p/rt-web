@@ -24,7 +24,7 @@ const calculateCountdown = (startAt: string): string => {
 export const useReminderHandler = () => {
     const setReminders = useSetAtom(remindersAtom);
 
-    const handleReminderCall = useCallback((args: ReminderArguments) => {
+    const handleReminderCall = useCallback((args: ReminderArguments): Reminder => {
         const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         const reminder: Reminder = {
@@ -39,6 +39,7 @@ export const useReminderHandler = () => {
 
         setReminders(prev => [...prev, reminder]);
         console.log('[Reminder] 新增提醒:', reminder);
+        return reminder;
     }, [setReminders]);
 
     return { handleReminderCall };

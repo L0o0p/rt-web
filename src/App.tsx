@@ -27,6 +27,7 @@ import type {
 import { VisionTestPanel } from './components/VisionTestPanel';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { useReminderHandler } from './hooks/useReminderHandler';
+import { useCameraHandler } from './hooks/useCameraHandler';
 import { ReminderPanel } from './components/ReminderPanel';
 
 // 趋势图组件
@@ -139,6 +140,9 @@ export const App = () => {
 
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
+
+  // Camera 处理 Hook
+  const { openCamera, closeCamera, isCameraOpen } = useCameraHandler();
 
   useEffect(() => {
     realTime.current = new RealTime()
@@ -1067,13 +1071,25 @@ export const App = () => {
                 console.error('[Reminder] ❌ 参数解析失败:', error);
               }
             }
+
+            // 处理 take_photo 工具调用
+            if (functionCallPayload?.function_name === 'take_photo' || functionCallPayload?.function?.name === 'take_photo') {
+              console.log('[Camera] ✅ 识别到 take_photo 工具调用:', functionCallPayload);
+              try {
+                // 打开摄像头
+                openCamera();
+                console.log('[Camera] 摄像头已打开，等待用户拍照');
+              } catch (error) {
+                console.error('[Camera] ❌ 打开摄像头失败:', error);
+              }
+            }
             break;
           }
 
           case 'response.function_call.done': {
             // 处理 function_call.done 事件，作为备用方案
             const functionCallPayload = payload as any;
-            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+            console.log('[ToolCall] 收到事件:', eventName, functionCallPayload);
 
             if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
               console.log('[Reminder] ✅ 识别到 reminder 工具调用 (function_call.done):', functionCallPayload);
@@ -1083,6 +1099,18 @@ export const App = () => {
                 handleReminderCall(args);
               } catch (error) {
                 console.error('[Reminder] ❌ 参数解析失败:', error);
+              }
+            }
+
+            // 处理 take_photo 工具调用
+            if (functionCallPayload?.function_name === 'take_photo' || functionCallPayload?.function?.name === 'take_photo') {
+              console.log('[Camera] ✅ 识别到 take_photo 工具调用 (function_call.done):', functionCallPayload);
+              try {
+                // 打开摄像头
+                openCamera();
+                console.log('[Camera] 摄像头已打开，等待用户拍照');
+              } catch (error) {
+                console.error('[Camera] ❌ 打开摄像头失败:', error);
               }
             }
             break;
@@ -1128,6 +1156,10 @@ export const App = () => {
           connectionManager.removeAllListeners('performance:latency:measured');
           console.log(`[DEBUG] 已清理高精度性能监听器`);
         }
+
+        // 关闭摄像头
+        closeCamera();
+        console.log(`[DEBUG] 摄像头已关闭`);
       };
     }
     // 提供全局函数来添加日志
@@ -1151,6 +1183,64 @@ export const App = () => {
       }
     }
   }, [isPlayingDownstreamAudio]);
+
+  // 处理照片捕获事件
+  useEffect(() => {
+    const handlePhotoCaptured = async (event: Event) => {
+      const blob = (event as CustomEvent).detail as Blob;
+      if (!blob) {
+        console.error('[CAMERA] 捕获的照片为空');
+        return;
+      }
+
+      console.log('[CAMERA] 收到捕获的照片，大小:', blob.size, '字节');
+
+      // 检查连接状态
+      const voiceChatCore = realTime.current?.getVoiceChatCore();
+      if (!voiceChatCore?.isConnected) {
+        console.error('[CAMERA] WebSocket未连接');
+        alert('WebSocket未连接，无法发送照片');
+        return;
+      }
+
+      if (!voiceChatCore?.isSessionCreated) {
+        console.error('[CAMERA] 会话未创建');
+        alert('会话未创建，无法发送照片');
+        return;
+      }
+
+      console.log('[CAMERA] 连接状态正常，开始发送照片...');
+
+      try {
+        // 将 Blob 转换为 Uint8Array
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        console.log('[CAMERA] 照片数据准备完成，大小:', uint8Array.length, '字节');
+
+        // 发送照片数据（使用协议ID 100 - All，无提示词）
+        const result = realTime.current?.sendImageData(uint8Array, '', ProtocolId.All);
+
+        if (result) {
+          console.log('[CAMERA] ✅ 照片发送成功，大小:', blob.size, '字节');
+          console.log('[CAMERA] 📡 等待服务端响应...');
+          // alert('照片已成功发送，请等待AI分析结果');
+        } else {
+          console.error('[CAMERA] ❌ 照片发送失败');
+          alert('照片发送失败，请检查连接状态');
+        }
+      } catch (error) {
+        console.error('[CAMERA] ❌ 照片处理失败:', error);
+        alert(`照片处理失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      }
+    };
+
+    window.addEventListener('photoCaptured', handlePhotoCaptured);
+
+    return () => {
+      window.removeEventListener('photoCaptured', handlePhotoCaptured);
+    };
+  }, []);
 
   // 获取延迟颜色类名的函数 - 使用 useMemo 优化
   const getLatencyColor = useMemo(() =>

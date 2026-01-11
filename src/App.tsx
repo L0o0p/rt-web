@@ -1052,16 +1052,37 @@ export const App = () => {
           }
 
           case 'response.function_call_arguments.done': {
-            // 处理 function_call 事件，识别 reminder 工具调用
+            // 处理 function_call_arguments.done 事件，识别 reminder 工具调用
             const functionCallPayload = payload as any;
-            if (functionCallPayload?.function?.name === 'reminder') {
-              console.log('[Reminder] 收到 reminder 工具调用:', functionCallPayload);
+            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+
+            // 根据实际日志，字段名是 function_name 而不是 function.name
+            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
+              console.log('[Reminder] ✅ 识别到 reminder 工具调用:', functionCallPayload);
               try {
                 const args = JSON.parse(functionCallPayload.arguments || '{}');
-                console.log('[Reminder] 解析参数:', args);
+                console.log('[Reminder] ✅ 解析参数:', args);
                 handleReminderCall(args);
               } catch (error) {
-                console.error('[Reminder] 参数解析失败:', error);
+                console.error('[Reminder] ❌ 参数解析失败:', error);
+              }
+            }
+            break;
+          }
+
+          case 'response.function_call.done': {
+            // 处理 function_call.done 事件，作为备用方案
+            const functionCallPayload = payload as any;
+            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+
+            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
+              console.log('[Reminder] ✅ 识别到 reminder 工具调用 (function_call.done):', functionCallPayload);
+              try {
+                const args = JSON.parse(functionCallPayload.arguments || '{}');
+                console.log('[Reminder] ✅ 解析参数:', args);
+                handleReminderCall(args);
+              } catch (error) {
+                console.error('[Reminder] ❌ 参数解析失败:', error);
               }
             }
             break;
@@ -1084,6 +1105,13 @@ export const App = () => {
         const handler = createEventHandler(eventName);
         handlers.set(eventName, handler);
         voiceChatCore.on(eventName, handler);
+      });
+
+      // 添加通用事件监听器，用于调试所有收到的事件
+      voiceChatCore.on('*', (eventName: string, payload: any) => {
+        if (eventName.includes('function_call') || eventName.includes('reminder')) {
+          console.log('[DEBUG] 🔔 收到相关事件:', eventName, JSON.stringify(payload).substring(0, 200));
+        }
       });
 
 

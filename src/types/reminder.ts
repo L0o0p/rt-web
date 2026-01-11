@@ -7,6 +7,7 @@ export interface Reminder {
     type: ReminderType;
     status: 'pending' | 'completed' | 'expired';
     createdAt: string;
+    countdown?: string;
 }
 
 export interface ReminderArguments {

@@ -1,42 +1,60 @@
 .card {
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 8px;
-    background: #fff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    color: white;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    animation: slideIn 0.3s ease-out;
+    flex-shrink: 0;
 
     &.medicine {
-        border-left: 4px solid #4CAF50;
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
     }
 
     &.meeting {
-        border-left: 4px solid #2196F3;
+        background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%);
     }
 
     &.alarm {
-        border-left: 4px solid #FF9800;
+        background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
     }
 
     &.birthday {
-        border-left: 4px solid #E91E63;
-    }
-
-    &.custom {
-        border-left: 4px solid #9C27B0;
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     }
 }
 
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.typeIcon {
+    font-size: 24px;
+}
+
+.countdown {
+    font-size: 18px;
+    font-weight: bold;
+    background: rgba(255, 255, 255, 0.2);
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
 .content {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 16px;
+    font-weight: 600;
     margin-bottom: 8px;
-    color: #333;
+    line-height: 1.4;
 }
 
 .time {
     font-size: 12px;
-    color: #666;
-    margin-bottom: 8px;
+    opacity: 0.8;
+    margin-bottom: 12px;
 }
 
 .actions {
@@ -44,20 +62,85 @@
     gap: 8px;
 
     button {
-        padding: 4px 12px;
+        flex: 1;
+        padding: 8px;
         border: none;
-        border-radius: 4px;
+        border-radius: 8px;
         cursor: pointer;
-        font-size: 12px;
+        font-size: 14px;
+        transition: transform 0.2s;
 
-        &:first-child {
-            background: #4CAF50;
-            color: white;
+        &:hover {
+            transform: scale(1.05);
         }
+    }
+}
 
-        &:last-child {
-            background: #f44336;
-            color: white;
+.completeBtn {
+    background: rgba(255, 255, 255, 0.9);
+    color: #11998e;
+}
+
+.deleteBtn {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+// 手机端便签条状样式
+@media (max-width: 480px) {
+    .card {
+        width: 140px;
+        min-width: 140px;
+        padding: 10px;
+        margin-bottom: 0;
+        margin-right: 8px;
+        border-radius: 16px;
+    }
+
+    .header {
+        margin-bottom: 6px;
+    }
+
+    .typeIcon {
+        font-size: 18px;
+    }
+
+    .countdown {
+        font-size: 12px;
+        padding: 2px 8px;
+    }
+
+    .content {
+        font-size: 13px;
+        margin-bottom: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .time {
+        display: none; // 手机端隐藏时间显示
+    }
+
+    .actions {
+        gap: 4px;
+
+        button {
+            padding: 4px 6px;
+            font-size: 11px;
+            border-radius: 6px;
         }
     }
 }

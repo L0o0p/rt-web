@@ -7,6 +7,7 @@
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     animation: slideIn 0.3s ease-out;
     flex-shrink: 0;
+    transform-origin: center;
 
     &.medicine {
         background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
@@ -22,6 +23,13 @@
 
     &.birthday {
         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+
+    // 到点提示：变色 + 晃动（保持 slideIn，不影响初次进入动画）
+    &.due {
+        background: linear-gradient(135deg, #ff4b2b 0%, #ff416c 100%);
+        box-shadow: 0 8px 28px rgba(255, 65, 108, 0.35);
+        animation: slideIn 0.3s ease-out, reminderShake 0.45s ease-in-out 0s 4;
     }
 }
 
@@ -96,6 +104,17 @@
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+@keyframes reminderShake {
+    0% { transform: translateX(0); }
+    12.5% { transform: translateX(-3px) rotate(-0.6deg); }
+    25% { transform: translateX(3px) rotate(0.6deg); }
+    37.5% { transform: translateX(-2px) rotate(-0.4deg); }
+    50% { transform: translateX(2px) rotate(0.4deg); }
+    62.5% { transform: translateX(-1px) rotate(-0.2deg); }
+    75% { transform: translateX(1px) rotate(0.2deg); }
+    100% { transform: translateX(0); }
 }
 
 // 手机端便签条状样式

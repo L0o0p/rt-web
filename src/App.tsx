@@ -126,7 +126,7 @@ export const App = () => {
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [imagePrompt, setImagePrompt] = useState<string>(''); // 图像提示词
   const [isImageInputExpanded, setIsImageInputExpanded] = useState(true); // 图片输入框展开状态
-  const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(true); // 图片上传区域展开状态
+  const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(false); // 默认展示响应显示
   // 会话状态
   const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
     connected: false,

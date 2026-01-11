@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { remindersAtom } from '../state/reminderAtoms';
 import type { ReminderArguments, Reminder } from '../types/reminder';
@@ -24,28 +24,6 @@ const calculateCountdown = (startAt: string): string => {
 export const useReminderHandler = () => {
     const setReminders = useSetAtom(remindersAtom);
 
-    // 使用 ref 存储所有定时器引用
-    const timerRefs = useRef<Map<string, number>>(new Map());
-
-    // 清理单个定时器
-    const clearTimer = useCallback((id: string) => {
-        const timerId = timerRefs.current.get(id);
-        if (timerId) {
-            window.clearInterval(timerId);
-            timerRefs.current.delete(id);
-        }
-    }, []);
-
-    // 清理所有定时器
-    useEffect(() => {
-        return () => {
-            timerRefs.current.forEach((timerId) => {
-                window.clearInterval(timerId);
-            });
-            timerRefs.current.clear();
-        };
-    }, []);
-
     const handleReminderCall = useCallback((args: ReminderArguments) => {
         const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -61,21 +39,7 @@ export const useReminderHandler = () => {
 
         setReminders(prev => [...prev, reminder]);
         console.log('[Reminder] 新增提醒:', reminder);
-
-        // 创建倒计时定时器
-        const timer = window.setInterval(() => {
-            setReminders(prev => prev.map(r =>
-                r.id === reminderId ? { ...r, countdown: calculateCountdown(r.startAt) } : r
-            ));
-        }, 1000);
-
-        // 存储定时器引用
-        timerRefs.current.set(reminderId, timer);
-        console.log('[Reminder] 倒计时定时器已启动:', reminderId);
-
-        // 返回清理函数（供外部调用）
-        return () => clearTimer(reminderId);
-    }, [setReminders, clearTimer]);
+    }, [setReminders]);
 
     return { handleReminderCall };
 };

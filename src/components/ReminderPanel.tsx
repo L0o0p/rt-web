@@ -9,9 +9,8 @@ export const ReminderPanel: React.FC = () => {
     const setReminders = useSetAtom(remindersAtom);
 
     const handleComplete = (id: string) => {
-        setReminders(prev => prev.map(r =>
-            r.id === id ? { ...r, status: 'completed' } : r
-        ));
+        // 完成即销毁组件：从列表移除即可（UI会卸载该 ReminderCard）
+        setReminders(prev => prev.filter(r => r.id !== id));
     };
 
     const handleDelete = (id: string) => {

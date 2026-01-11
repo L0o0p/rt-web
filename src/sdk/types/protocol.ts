@@ -13,7 +13,7 @@
  */
 export const CONFIG = {
     // WebSocket 服务器地址，从环境变量读取
-    WEBSOCKET_URL: 'wss://agent-zh.vkcto.com:9440/ws',
+    WEBSOCKET_URL: import.meta.env.VITE_WEBSOCKET_URL || 'ws://agent-zh-test.vkcto.com:32028/ws',
 
     // 调试模式开关
     DEBUG_MODE: import.meta.env.VITE_DEBUG_MODE === 'true' || true,

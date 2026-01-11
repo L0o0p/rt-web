@@ -1,7 +1,7 @@
 import { CONFIG } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
-import { ClientBinaryMessage as BinaryMessage, CommandId, ProtocolId } from '../protocol/ClientProtocol';
-import type { WebSocketMessage, SessionConfigPayload } from '../protocol/ClientProtocol';
+import { CommandId, ProtocolId } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload , ClientBinaryMessage as BinaryMessage} from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
   BinaryMessageParser,
@@ -225,36 +225,206 @@ export class CombinedConnectionManager extends EventEmitter {
       const sessionConfigPayload: SessionConfigPayload = {
         type: "session_config",
         mode: "vad",
-        system_prompt: `你是Squady realTime，一个由TeamSquady研发的智能语音助手。你具备以下特征和能力：
+        // 提示词
+//         system_prompt: `你是Squady realTime，一个由TeamSquady研发的智能语音助手。你具备以下特征和能力：
 
-身份定位
-你是用户的贴心语音伙伴，能够通过自然对话帮助用户解决各种问题。你性格友善、耐心，善于倾听并提供有价值的帮助。
+// 身份定位
+// 你是用户的贴心语音伙伴，能够通过自然对话帮助用户解决各种问题。你性格友善、耐心，善于倾听并提供有价值的帮助。
 
-核心能力
+// 核心能力
 
-实时语音对话，支持自然流畅的多轮交流
-广泛的知识储备，涵盖生活、工作、学习等各个领域
-智能理解用户意图，提供精准的信息和建议
-支持任务协助，如日程管理、信息查询、内容创作等
-交互原则
+// 实时语音对话，支持自然流畅的多轮交流
+// 广泛的知识储备，涵盖生活、工作、学习等各个领域
+// 智能理解用户意图，提供精准的信息和建议
+// 支持任务协助，如日程管理、信息查询、内容创作等
+// 交互原则
 
-保持简洁明了的回答，避免冗长的解释
-用温暖、自然的语调与用户交流
-主动询问细节以更好地理解用户需求
-承认不确定性，诚实表达能力边界
-价值观
+// 保持简洁明了的回答，避免冗长的解释
+// 用温暖、自然的语调与用户交流
+// 主动询问细节以更好地理解用户需求
+// 承认不确定性，诚实表达能力边界
+// 价值观
 
-始终以用户的最佳利益为出发点
-尊重用户隐私，保护个人信息安全
-提供客观、平衡的观点，避免偏见
-鼓励用户独立思考和学习成长`,
-        mcp_server_config: [
+// 始终以用户的最佳利益为出发点
+// 尊重用户隐私，保护个人信息安全
+// 提供客观、平衡的观点，避免偏见
+        // 鼓励用户独立思考和学习成长`,
+        system_prompt: "<assistantProfile><role><n>「好朋友」</n><description>「好朋友」是「好朋友」 Glasses的多语言语音AI助手,由squady和微克科技联合开发。</description><personality>友好高效,语音优化,多语言支持</personality></role><jacksonWangProfile><basic>王嘉尔(Jackson Wang),1994年3月28日生于香港,全球艺人、音乐唱作人、TEAM WANG创始人兼创意总监,韩国男团GOT7成员。</basic><background>前香港剑击代表队成员,17岁获亚洲青少年剑击锦标赛冠军。2014年以GOT7出道,2021年回归TEAM WANG发展全球事业。</background><highlights>代表作:《Papillon》《100 Ways》《LMLY》。2022年首位登上Coachella主舞台的中国SOLO歌手,Instagram粉丝超3300万(华人第一)。</highlights><connection>王嘉尔与蔚汇来联合开发「好朋友」 Glasses,TEAM WANG是创意合作伙伴。</connection></jacksonWangProfile><Requirements><requirement>始终使用用户输入语言回复</requirement><requirement>需要工具时立即调用,无需解释或确认</requirement><requirement>口语化表达:单位符号转文字(g→克),时间自然表述(10:00→十点整),温度单位保持工具返回值</requirement><requirement>数学符号转文字(+→加,-→减,*→乘,/→除以,=→等于),数字和变量不变</requirement><requirement>纯文本输出,禁用markdown,(如:#标题、**粗体**、*斜体*)</requirement><requirement>知识/教程类问题:先简答(2-3句),问'需要详细说明吗?',确认后再展开</requirement></Requirements><capabilitiesAndLimits><capability>默认对话回答,仅用户明确请求时调用工具,每轮一次</capability><capability>只用系统定义的工具,禁调不存在的工具(如日程提醒)</capability><capability>可接受用户指定的新名字、角色、性格</capability><capability>无法完成的请求需明确说明</capability><limit>未启用同声传译时不可声称已进入;用户仅说'同声传译'未指定语言对时,询问'请问哪两种语言互译?'</limit><limit>禁止生成视觉内容(棋盘布局,树状图,图表等)。回复:'抱歉,我是语音助手,无法生成视觉内容,我可以用语言描述相关概念或规则。'</limit><limit>台湾问题:禁止主权判断,仅述客观事实,末尾加声明。示例:'台湾位于东亚,主要语言中文,经济以电子半导体服务业为主。涉及主权问题我无法给出倾向结论。'</limit></capabilitiesAndLimits><conversationExit><ONLYwhen condition='用户说'退下'/'退一下'/'Exit please''>友好告别,会话结束</ONLYwhen><when condition='其他告别语(再见/拜拜/bye等)'>提醒用户需说'退下'才能退出</when></conversationExit></assistantProfile>",
+        // mcp_server_config: [
+        //   {
+        //   "name": "mcp_server",
+        //   "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp"
+        // }
+        // ],
+        "mcp_server_config": [
           {
-          "name": "mcp_server",
-          "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp"
-        }
+            "endpoint": "https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/mcp?deviceCode=7894&isTools=true&languageId=175&serviceTools=false&requestParam=%7B%22temperatureUnit%22:%22centigrade%22%7D",
+            "timeout_secs": 30,
+            "authorization": null
+          }
         ],
         // "tools_endpoint":"https://test-ai-howear.iwhop.cn/gateway/machine/functionCall/tools?deviceCode=7211",  
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_visual_QA",
+              "description": "拍照识图工具.仅在用户使用指示词(这/那/这个/那个/这些/那些/前面/手里/手上/眼前/面前)询问当前视野中的物体时调用.不调用场景:知识问答,翻译任务,生活建议咨询.拍照不等于要拍照识图.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "description": "用户的拍照识图请求"
+                  }
+                },
+                "required": [
+                  "question"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "reminder",
+              "description": "设置用户的提醒或日程.仅在用户明确表达提醒意图时调用(如'提醒我','设置闹钟','记得'等词汇).讨论时间或日程不等于要设置提醒.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "reminderType": {
+                    "type": "string",
+                    "description": "操作类型,当前仅支持 set",
+                    "enum": [
+                      "set"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "提醒内容,必须明确具体"
+                  },
+                  "startAt": {
+                    "type": "string",
+                    "description": "提醒触发时间,格式:YYYY-MM-DD HH:MM:SS.对于'X分钟后'类倒计时,直接计算最终时间;对于'X点到Y点的会议'类事件,使用开始时间."
+                  }
+                },
+                "required": [
+                  "reminderType",
+                  "content",
+                  "startAt"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "start_navigation",
+              "description": "导航工具.仅在用户明确表示前往意图并给出目的地时调用.询问路线或交通信息不等于要导航.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "destination": {
+                    "type": "string",
+                    "description": "目的地,该字段必须以中文输出"
+                  }
+                },
+                "required": [
+                  "destination"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "天气查询工具.仅在用户明确询问天气,温度,降水,空气质量时调用.注意:提到地点不等于询问天气,查询交通信息不要调用此工具.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string",
+                    "description": "查询地点,未指定则用户所在地"
+                  },
+                  "fromDate": {
+                    "type": "string",
+                    "description": "开始日期,格式 yyyy-MM-dd"
+                  },
+                  "toDate": {
+                    "type": "string",
+                    "description": "结束日期,格式 yyyy-MM-dd"
+                  },
+                  "language": {
+                    "type": "string",
+                    "description": "返回语言,必须匹配输入语种",
+                    "enum": [
+                      "zh",
+                      "en",
+                      "ja",
+                      "ko"
+                    ]
+                  }
+                },
+                "required": [
+                  "location"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "device_control",
+              "description": "电量查询工具.仅在用户询问助手剩余电量时调用(如'还有多少电','电量多少','需要充电吗').不调用场景:询问建议(如'电量不够用怎么办').",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "description": "查询对象,固定为 battery",
+                    "enum": [
+                      "battery"
+                    ]
+                  },
+                  "actionMode": {
+                    "type": "string",
+                    "description": "操作模式,固定为 query",
+                    "enum": [
+                      "query"
+                    ]
+                  }
+                },
+                "required": [
+                  "target",
+                  "actionMode"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "take_photo",
+              "description": "拍照工具.仅在用户明确要求拍照时调用(如'拍照','拍张照片','帮我拍下来'等).注意:单纯拍照不等于拍照识图,如果用户询问视野中的物体(如'前面是什么','这是什么'),应使用get_visual_QA工具而非此工具.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "description": "拍照操作,固定为 capture",
+                    "enum": [
+                      "capture"
+                    ]
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        ],
         enable_search: true,
         signal_only: false,
         asr_language: "zh",

@@ -85,7 +85,7 @@ export default defineConfig({
     // 修复WebSocket连接问题
     hmr: {
       port: 5173,
-      host: '192.168.3.62',
+      host: 'localhost',
       protocol: 'ws', // 改为 ws 支持 http
       // 添加客户端配置
       clientPort: 5173

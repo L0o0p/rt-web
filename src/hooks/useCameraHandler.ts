@@ -23,20 +23,46 @@ export const useCameraHandler = (): CameraHandler => {
         setError(null);
 
         try {
+            if (!navigator.mediaDevices?.getUserMedia) {
+                throw new Error('当前浏览器不支持摄像头');
+            }
+            // iOS/Safari & 部分安卓浏览器要求 HTTPS（或 localhost）才能调用 getUserMedia
+            if (!window.isSecureContext) {
+                throw new Error('需要在 HTTPS 环境下才能打开摄像头');
+            }
+
             // 停止之前的流
             if (streamRef.current) {
                 streamRef.current.getTracks().forEach(track => track.stop());
             }
 
-            // 请求摄像头权限
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: facingModeRef.current,
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                },
-                audio: false
-            });
+            // 请求摄像头权限（移动端对 facingMode 兼容性差，做多档 fallback）
+            const tryGetUserMedia = async (constraints: MediaStreamConstraints) => {
+                return await navigator.mediaDevices.getUserMedia(constraints);
+            };
+
+            let stream: MediaStream | null = null;
+            const baseVideo = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+            const attempts: MediaStreamConstraints[] = [
+                // 部分浏览器支持 exact
+                { video: { ...baseVideo, facingMode: { exact: facingModeRef.current } }, audio: false } as MediaStreamConstraints,
+                // 通用 ideal
+                { video: { ...baseVideo, facingMode: { ideal: facingModeRef.current } }, audio: false } as MediaStreamConstraints,
+                // 最后兜底：让浏览器自己挑
+                { video: true, audio: false }
+            ];
+
+            for (const c of attempts) {
+                try {
+                    stream = await tryGetUserMedia(c);
+                    break;
+                } catch (_e) {
+                    // try next
+                }
+            }
+            if (!stream) {
+                throw new Error('无法打开摄像头（权限/设备/浏览器限制）');
+            }
 
             streamRef.current = stream;
 
@@ -45,6 +71,9 @@ export const useCameraHandler = (): CameraHandler => {
             video.srcObject = stream;
             video.autoplay = true;
             video.playsInline = true;
+            // iOS Safari 兼容：需要 attribute
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('webkit-playsinline', 'true');
             video.muted = true;
 
             videoRef.current = video;
@@ -52,7 +81,10 @@ export const useCameraHandler = (): CameraHandler => {
             // 等待视频加载
             await new Promise<void>((resolve) => {
                 video.onloadedmetadata = () => {
-                    video.play();
+                    // 部分移动端会拒绝非手势 play，先尝试，不阻塞打开流程
+                    void video.play().catch(() => {
+                        // ignore - 下面会提供“点击开始预览”的兜底
+                    });
                     resolve();
                 };
             });
@@ -117,6 +149,41 @@ export const useCameraHandler = (): CameraHandler => {
             container.appendChild(closeBtn);
             document.body.appendChild(container);
 
+            // 如果自动播放失败，让用户点一下开始预览（满足用户手势要求）
+            const ensurePreview = async () => {
+                try {
+                    await video.play();
+                } catch (_e) {
+                    const existing = document.getElementById('camera-preview-start');
+                    if (existing) return;
+                    const startBtn = document.createElement('button');
+                    startBtn.id = 'camera-preview-start';
+                    startBtn.innerHTML = '▶ 点击开始预览';
+                    startBtn.style.position = 'fixed';
+                    startBtn.style.bottom = '170px';
+                    startBtn.style.left = '50%';
+                    startBtn.style.transform = 'translateX(-50%)';
+                    startBtn.style.padding = '12px 24px';
+                    startBtn.style.fontSize = '16px';
+                    startBtn.style.borderRadius = '24px';
+                    startBtn.style.border = 'none';
+                    startBtn.style.background = 'rgba(0,0,0,0.65)';
+                    startBtn.style.color = 'white';
+                    startBtn.style.cursor = 'pointer';
+                    startBtn.style.zIndex = '10001';
+                    startBtn.onclick = async () => {
+                        try {
+                            await video.play();
+                            startBtn.remove();
+                        } catch (e2) {
+                            console.error('[CAMERA] 预览启动失败:', e2);
+                        }
+                    };
+                    container.appendChild(startBtn);
+                }
+            };
+            void ensurePreview();
+
             // 拍照事件
             captureBtn.onclick = async () => {
                 setIsCapturing(true);
@@ -157,8 +224,59 @@ export const useCameraHandler = (): CameraHandler => {
 
         } catch (err) {
             console.error('[CAMERA] 打开摄像头失败:', err);
-            setError(err instanceof Error ? err.message : '无法打开摄像头');
+            const msg = err instanceof Error ? err.message : '无法打开摄像头';
+            setError(msg);
             setIsCameraOpen(false);
+
+            // 移动端常见：必须由用户点击触发（非手势调用会被拦）。提供“一键重试”覆盖按钮。
+            const domErr = err as any;
+            const name = typeof domErr?.name === 'string' ? domErr.name : '';
+            const shouldOfferRetry =
+                name === 'NotAllowedError' ||
+                name === 'SecurityError' ||
+                msg.includes('HTTPS') ||
+                msg.includes('权限') ||
+                msg.includes('gesture');
+
+            if (shouldOfferRetry) {
+                const existing = document.getElementById('camera-retry-overlay');
+                if (existing) return;
+
+                const overlay = document.createElement('div');
+                overlay.id = 'camera-retry-overlay';
+                overlay.style.position = 'fixed';
+                overlay.style.top = '0';
+                overlay.style.left = '0';
+                overlay.style.width = '100%';
+                overlay.style.height = '100%';
+                overlay.style.background = 'rgba(0,0,0,0.7)';
+                overlay.style.zIndex = '10002';
+                overlay.style.display = 'flex';
+                overlay.style.alignItems = 'center';
+                overlay.style.justifyContent = 'center';
+
+                const btn = document.createElement('button');
+                btn.innerHTML = '点一下授权/打开摄像头';
+                btn.style.padding = '14px 22px';
+                btn.style.fontSize = '16px';
+                btn.style.borderRadius = '28px';
+                btn.style.border = 'none';
+                btn.style.background = 'white';
+                btn.style.color = '#111';
+                btn.style.cursor = 'pointer';
+
+                btn.onclick = async () => {
+                    overlay.remove();
+                    await openCamera(); // 这次由用户手势触发
+                };
+
+                overlay.onclick = (e) => {
+                    if (e.target === overlay) overlay.remove();
+                };
+
+                overlay.appendChild(btn);
+                document.body.appendChild(overlay);
+            }
         }
     }, []);
 

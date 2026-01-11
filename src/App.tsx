@@ -1062,9 +1062,21 @@ export const App = () => {
           }
 
           case 'response.function_call_arguments.done': {
-            // 处理 function_call_arguments.done 事件，识别 reminder 工具调用
+            // 处理 function_call_arguments.done 事件，识别工具调用
             const functionCallPayload = payload as any;
-            console.log('[Reminder] 收到事件:', eventName, functionCallPayload);
+            console.log('[ToolCall] 收到事件:', eventName, functionCallPayload);
+
+            const fnName =
+              functionCallPayload?.function_name ||
+              functionCallPayload?.function?.name ||
+              functionCallPayload?.name;
+            const callId = functionCallPayload?.call_id;
+            let parsedArgs: any = undefined;
+            try {
+              parsedArgs = JSON.parse(functionCallPayload.arguments || '{}');
+            } catch (_e) {
+              // ignore
+            }
 
             // 根据实际日志，字段名是 function_name 而不是 function.name
             if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
@@ -1078,16 +1090,23 @@ export const App = () => {
               }
             }
 
-            // 处理 take_photo 工具调用
-            if (functionCallPayload?.function_name === 'take_photo' || functionCallPayload?.function?.name === 'take_photo') {
-              console.log('[Camera] ✅ 识别到 take_photo 工具调用:', functionCallPayload);
-              try {
-                // 打开摄像头
-                openCamera();
-                console.log('[Camera] 摄像头已打开，等待用户拍照');
-              } catch (error) {
-                console.error('[Camera] ❌ 打开摄像头失败:', error);
-              }
+            // 处理拍照意图：兼容不同tool命名（take_photo / device_command 等）
+            const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
+            const isTakePhotoIntent =
+              fnName === 'take_photo' ||
+              // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
+              fnName === 'device_command' ||
+              (typeof callId === 'string' && callId.includes('take_photo')) ||
+              (
+                // 兜底：device_command 类工具里带“拍照”指令
+                ((fnName && String(fnName).includes('device')) || (typeof callId === 'string' && callId.includes('device'))) &&
+                (argsStr.includes('take_photo') || argsStr.includes('拍照') || argsStr.includes('camera'))
+              );
+
+            if (isTakePhotoIntent) {
+              console.log('[Camera] ✅ 识别到拍照意图，准备打开摄像头:', { fnName, callId, parsedArgs });
+              void openCamera();
+              console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
             }
             break;
           }
@@ -1097,7 +1116,19 @@ export const App = () => {
             const functionCallPayload = payload as any;
             console.log('[ToolCall] 收到事件:', eventName, functionCallPayload);
 
-            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
+            const fnName =
+              functionCallPayload?.function_name ||
+              functionCallPayload?.function?.name ||
+              functionCallPayload?.name;
+            const callId = functionCallPayload?.call_id;
+            let parsedArgs: any = undefined;
+            try {
+              parsedArgs = JSON.parse(functionCallPayload.arguments || '{}');
+            } catch (_e) {
+              // ignore
+            }
+
+            if (fnName === 'reminder') {
               console.log('[Reminder] ✅ 识别到 reminder 工具调用 (function_call.done):', functionCallPayload);
               try {
                 const args = JSON.parse(functionCallPayload.arguments || '{}');
@@ -1108,16 +1139,21 @@ export const App = () => {
               }
             }
 
-            // 处理 take_photo 工具调用
-            if (functionCallPayload?.function_name === 'take_photo' || functionCallPayload?.function?.name === 'take_photo') {
-              console.log('[Camera] ✅ 识别到 take_photo 工具调用 (function_call.done):', functionCallPayload);
-              try {
-                // 打开摄像头
-                openCamera();
-                console.log('[Camera] 摄像头已打开，等待用户拍照');
-              } catch (error) {
-                console.error('[Camera] ❌ 打开摄像头失败:', error);
-              }
+            // 处理拍照意图（备用）：function_call.done 有时不带 function_name，只能靠 call_id / arguments 兜底
+            const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
+            const isTakePhotoIntent =
+              fnName === 'take_photo' ||
+              // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
+              fnName === 'device_command' ||
+              (typeof callId === 'string' && callId.includes('take_photo')) ||
+              (
+                ((fnName && String(fnName).includes('device')) || (typeof callId === 'string' && callId.includes('device'))) &&
+                (argsStr.includes('take_photo') || argsStr.includes('拍照') || argsStr.includes('camera'))
+              );
+            if (isTakePhotoIntent) {
+              console.log('[Camera] ✅ 识别到拍照意图(备用)，准备打开摄像头:', { fnName, callId, parsedArgs });
+              void openCamera();
+              console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
             }
             break;
           }

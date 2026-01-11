@@ -197,7 +197,8 @@ export class VoiceChatCore extends EventEmitter {
     try {
       // 使用提供的协议ID或默认为All(100)
       const finalProtocolId = protocolId || ProtocolId.All;
-      const promptText = prompt || "";
+      // 默认提示词：避免空prompt导致服务端/模型不触发分析
+      const promptText = (prompt && prompt.trim().length > 0) ? prompt : "请描述我前面有什么";
       
       logger.info(`[IMAGE] 准备发送图像数据 - 会话ID: ${validation.sessionId}, 协议ID: ${finalProtocolId}, 数据大小: ${imageData.length} 字节`);
 

@@ -121,6 +121,22 @@ export const App = () => {
   const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
   const [talkHint, setTalkHint] = useState<string>(''); // 移动端点击“开始对话”无反馈时用于提示原因
 
+  // Voice (TTS) config
+  const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
+  const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
+  const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
+  type VoicePreset = 'default' | 'soft';
+  const [voicePreset, setVoicePreset] = useState<VoicePreset>(() => {
+    try {
+      const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY) as VoicePreset | null;
+      if (preset === 'default' || preset === 'soft') return preset;
+      const legacy = localStorage.getItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY);
+      return (legacy === '1' || legacy === 'true') ? 'soft' : 'default';
+    } catch {
+      return 'default';
+    }
+  });
+
   const [vadThreshold, setVadThreshold] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
   // 图像上传相关状态
@@ -149,6 +165,7 @@ export const App = () => {
       { id: 'en-wss', label: '9440（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
       { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
       { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
+      { id: 'new-asr', label: '32027(ws)', url: 'ws://agent-zh-dm.vkcto.com:32027/ws' },
       { id: 'custom', label: '自定义', url: '' },
     ] as const;
   }, []);
@@ -1470,6 +1487,28 @@ export const App = () => {
     setSessionIdInput('');
   }, [resetPerformanceMonitor, sessionIdInput]);
 
+  const applyVoicePreset = useCallback((nextPreset: VoicePreset) => {
+    setVoicePreset(nextPreset);
+    try {
+      localStorage.setItem(VOICE_PRESET_STORAGE_KEY, nextPreset);
+      // 兼容旧 key：保持同步，避免其它地方还在读
+      localStorage.setItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY, nextPreset === 'soft' ? '1' : '0');
+    } catch { /* ignore */ }
+
+    const voice_setting = nextPreset === 'soft'
+      ? { voice_id: CUSTOM_VOICE_ID, speed: 1.0, pitch: 0, vol: 1.0 }
+      : undefined; // 默认：不发 voice_setting，让服务端走默认音色
+
+    // 1) 更新默认 config（下次连接也会带上/不带 voice_setting）
+    realTime.current?.setSessionConfig?.({ voice_setting });
+
+    // 2) 已连接：强制新 sessionId 立即生效
+    const voiceChatCore = realTime.current?.getVoiceChatCore?.();
+    if (voiceChatCore?.isConnected) {
+      voiceChatCore.startNewSession?.({ voice_setting });
+    }
+  }, []);
+
   useEffect(() => {
     const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
 
@@ -1681,6 +1720,28 @@ export const App = () => {
             >
               Apply
             </button>
+          </div>
+
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>Voice</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={voicePreset === 'default'}
+                disabled={isSwitchingWs}
+                onChange={(e) => { if (e.target.checked) applyVoicePreset('default'); }}
+              />
+              默认
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={voicePreset === 'soft'}
+                disabled={isSwitchingWs}
+                onChange={(e) => { if (e.target.checked) applyVoicePreset('soft'); }}
+              />
+              轻柔音色
+            </label>
           </div>
         </div>
 

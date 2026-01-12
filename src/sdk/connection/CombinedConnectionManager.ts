@@ -530,7 +530,11 @@ export class CombinedConnectionManager extends EventEmitter {
    * 更新默认会话配置
    */
   setDefaultSessionConfig(config: Partial<SessionConfigPayload>): void {
-    this.defaultSessionConfig = config;
+    // 合并更新：避免调用方只传一个字段（如 voice_setting）就把默认的 asr/timezone/location 等覆盖掉
+    this.defaultSessionConfig = {
+      ...(this.defaultSessionConfig ?? {}),
+      ...(config ?? {}),
+    };
   }
 
   // === 以下是从原SDKMessageHandler迁移的方法 ===

@@ -191,6 +191,9 @@ export const App = () => {
     setWsInput(current);
     const matched = wsPresets.find(p => p.url && p.url === current);
     setWsPresetId((matched?.id ?? 'custom') as WsPresetId);
+
+    // 启动时打印当前实际生效的环境（从 localStorage 覆盖 + 默认值综合后的结果）
+    console.log('[WS CONFIG] boot', { presetId: matched?.id ?? 'custom', presetLabel: matched?.label ?? '自定义', url: current });
   }, [wsPresets]);
 
   // 响应速度监控相关状态
@@ -264,20 +267,11 @@ export const App = () => {
     setWsUrl(trimmed);
     setWsInput(trimmed);
 
-    const voiceChatCore = realTime.current?.getVoiceChatCore();
-    if (!voiceChatCore) return;
-
+    // 切换环境：直接刷新页面（相当于重启应用）
+    // 注意：环境变化通过 localStorage 写入保证，刷新后 connect() 会读到新值。
     setIsSwitchingWs(true);
-    try {
-      voiceChatCore.disconnect();
-      await voiceChatCore.connect();
-      console.log('[WS CONFIG] switch:ok', { presetId: presetId ?? null, presetLabel, url: trimmed });
-    } catch (error) {
-      console.error('[WS CONFIG] switch:fail', { presetId: presetId ?? null, presetLabel, from: prevUrl, to: trimmed, error });
-      alert(`切换WebSocket失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setIsSwitchingWs(false);
-    }
+    console.log('[WS CONFIG] switch:reload', { presetId: presetId ?? null, presetLabel, url: trimmed });
+    window.location.reload();
   }, [resetPerformanceMonitor, wsPresets]);
 
   // 切换性能监控状态

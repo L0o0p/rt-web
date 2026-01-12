@@ -144,18 +144,9 @@ export const App = () => {
   const wsPresets = useMemo(() => {
     return [
       { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },
-      { id: 'cn-ws', label: '国内（ws）-正式', url: 'ws://agent-zh.vkcto.com:32029/ws' },
-      { id: 'en-ws', label: '海外（ws）-正式', url: 'ws://agent-en.vkcto.com:32029/ws' },
-      { id: 'cn-wss', label: '国内（wss）-正式', url: 'wss://agent-zh.vkcto.com:9440/ws' },
-      { id: 'en-wss', label: '海外（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
-      { id: 'cn-ws-beta', label: '国内（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
-      { id: 'en-ws-beta', label: '海外（ws）-尝鲜', url: 'ws://agent-en-dm.vkcto.com:32030/ws' },
-      { id: 'cn-wss-beta', label: '国内（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
-      { id: 'en-wss-beta', label: '海外（wss）-尝鲜', url: 'wss://agent-en-dm.vkcto.com:9441/ws' },
-      { id: 'agent-zh-test', label: '测试', url: 'ws://agent-zh-test.vkcto.com:32028/ws' },
-      { id: 'agent-zh-dev', label: '开发', url: 'ws://agent-zh-dev.vkcto.com:32027/ws' },
-      { id: 'localhost-wss', label: '本地（wss）', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
-      { id: 'localhost-ws', label: '本地（ws）', url: 'ws://localhost:32028/ws' },
+      { id: 'en-wss', label: '9440（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
+      { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
+      { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
       { id: 'custom', label: '自定义', url: '' },
     ] as const;
   }, []);

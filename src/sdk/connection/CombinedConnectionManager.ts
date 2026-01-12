@@ -1,7 +1,7 @@
 import { CONFIG, getWebSocketUrl } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
 import { CommandId, ProtocolId } from '../protocol/ClientProtocol';
-import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
   BinaryMessageParser,

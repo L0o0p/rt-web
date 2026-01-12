@@ -140,6 +140,8 @@ export const App = () => {
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
 
   const realTime = useRef<any>()
+  // take_photo/tool call 闭环去重：避免 arguments.done / function_call.done 两个分支重复回传
+  const takePhotoAckedCallIdsRef = useRef<Set<string>>(new Set())
 
   const wsPresets = useMemo(() => {
     return [
@@ -1176,6 +1178,22 @@ export const App = () => {
               console.log('[Camera] ✅ 识别到拍照意图，准备打开摄像头:', { fnName, callId, parsedArgs });
               void openCamera();
               console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
+
+              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
+                  takePhotoAckedCallIdsRef.current.add(callId)
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    action: 'take_photo',
+                    result: 'camera_open_requested',
+                  });
+                }
+              } else {
+                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
+              }
             }
             break;
           }
@@ -1237,6 +1255,22 @@ export const App = () => {
               console.log('[Camera] ✅ 识别到拍照意图(备用)，准备打开摄像头:', { fnName, callId, parsedArgs });
               void openCamera();
               console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
+
+              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
+                  takePhotoAckedCallIdsRef.current.add(callId)
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    action: 'take_photo',
+                    result: 'camera_open_requested',
+                  });
+                }
+              } else {
+                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
+              }
             }
             break;
           }

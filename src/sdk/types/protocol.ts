@@ -1,5 +1,7 @@
 /// <reference types="../../@types/env" />
 
+import { getRuntimeWebSocketUrl } from '../config/runtimeConfig';
+
 /**
  * 配置常量
  * 
@@ -25,3 +27,10 @@ export const CONFIG = {
     // 重连间隔时间（毫秒）
     RECONNECT_INTERVAL: Number(import.meta.env.VITE_RECONNECT_INTERVAL) || 3000,
 } as const;
+
+export const DEFAULT_WEBSOCKET_URL = CONFIG.WEBSOCKET_URL;
+
+// 运行时 WS URL（用于 UI 切换 / localStorage 覆盖）
+export function getWebSocketUrl(): string {
+    return getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
+}

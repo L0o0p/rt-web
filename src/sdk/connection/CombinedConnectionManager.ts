@@ -1,4 +1,4 @@
-import { CONFIG } from '../types/protocol';
+import { CONFIG, getWebSocketUrl } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
 import { CommandId, ProtocolId } from '../protocol/ClientProtocol';
 import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
@@ -84,7 +84,7 @@ export class CombinedConnectionManager extends EventEmitter {
         throw new Error('当前浏览器不支持WebSocket');
       }
 
-      this.websocket = new WebSocket(CONFIG.WEBSOCKET_URL);
+      this.websocket = new WebSocket(getWebSocketUrl());
 
       this.websocket.onopen = (event: Event): void => {
         this.handleOpen(event);

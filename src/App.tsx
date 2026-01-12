@@ -157,6 +157,8 @@ export const App = () => {
   const [wsUrl, setWsUrl] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
   const [wsInput, setWsInput] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
   const [isSwitchingWs, setIsSwitchingWs] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(''); // 展示当前 sessionId
+  const [sessionIdInput, setSessionIdInput] = useState<string>(''); // 手动传入 sessionId
 
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
@@ -1412,10 +1414,27 @@ export const App = () => {
       // console.log('[DEBUG] 会话状态更新:', newStatus);
       setSessionStatus(newStatus);
       setIsSessionCreated(voiceChatCore.isSessionCreated);
+      setCurrentSessionId(voiceChatCore.currentSessionId ?? '');
     } else {
       console.log('[DEBUG] VoiceChatCore 实例不可用');
     }
   }, [setIsSessionCreated]);
+
+  const applySessionId = useCallback(() => {
+    const trimmed = sessionIdInput.trim();
+    if (!trimmed) return;
+
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    if (!voiceChatCore?.isConnected) {
+      alert('WebSocket未连接，无法切换sessionId');
+      return;
+    }
+
+    console.log('[SESSION] switch', { from: voiceChatCore.currentSessionId, to: trimmed });
+    resetPerformanceMonitor('session_switch');
+    voiceChatCore.getConnectionManager().recreateSession(trimmed);
+    setSessionIdInput('');
+  }, [resetPerformanceMonitor, sessionIdInput]);
 
   useEffect(() => {
     const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
@@ -1602,6 +1621,32 @@ export const App = () => {
           </div>
           <div className={styles.wsConfigHint} title={wsUrl}>
             当前: {wsUrl}
+          </div>
+
+          <div className={styles.wsConfigHint} title={currentSessionId || undefined}>
+            Session: {currentSessionId || '--'}
+          </div>
+
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>Session</span>
+            <input
+              value={sessionIdInput}
+              onChange={(e) => setSessionIdInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applySessionId();
+              }}
+              placeholder="输入 sessionId（如16位）"
+              className={styles.wsConfigInput}
+              disabled={isSwitchingWs}
+            />
+            <button
+              type="button"
+              onClick={applySessionId}
+              disabled={isSwitchingWs}
+              className={styles.wsConfigButton}
+            >
+              Apply
+            </button>
           </div>
         </div>
 

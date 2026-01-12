@@ -206,6 +206,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-direction: column;
     // flex: 1;
 
     // 移动端适配
@@ -218,6 +219,66 @@ body {
     @media (max-width: 480px) {
         flex: none;
     }
+}
+
+.wsConfigBar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 12px;
+    max-width: calc(100vw - 24px);
+    align-items: center;
+}
+
+.wsConfigRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.wsConfigLabel {
+    font-family: "Caros Bold", sans-serif;
+    opacity: 0.9;
+}
+
+.wsConfigSelect {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.15);
+    color: #fff;
+    padding: 6px 8px;
+}
+
+.wsConfigInput {
+    width: min(420px, calc(100vw - 120px));
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.15);
+    color: #fff;
+    padding: 6px 8px;
+}
+
+.wsConfigButton {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.wsConfigHint {
+    opacity: 0.85;
+    max-width: min(520px, calc(100vw - 24px));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 

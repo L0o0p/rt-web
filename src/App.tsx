@@ -29,6 +29,8 @@ import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { useReminderHandler } from './hooks/useReminderHandler';
 import { useCameraHandler } from './hooks/useCameraHandler';
 import { ReminderPanel } from './components/ReminderPanel';
+import { DEFAULT_WEBSOCKET_URL } from './sdk/types/protocol';
+import { getRuntimeWebSocketUrl, setStoredWebSocketUrl } from './sdk/config/runtimeConfig';
 
 // 趋势图组件
 const TrendChart = React.memo(({ responseMetrics }: {
@@ -139,6 +141,32 @@ export const App = () => {
 
   const realTime = useRef<any>()
 
+  const wsPresets = useMemo(() => {
+    return [
+      { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },
+      { id: 'cn-ws', label: '国内（ws）-正式', url: 'ws://agent-zh.vkcto.com:32029/ws' },
+      { id: 'en-ws', label: '海外（ws）-正式', url: 'ws://agent-en.vkcto.com:32029/ws' },
+      { id: 'cn-wss', label: '国内（wss）-正式', url: 'wss://agent-zh.vkcto.com:9440/ws' },
+      { id: 'en-wss', label: '海外（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
+      { id: 'cn-ws-beta', label: '国内（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
+      { id: 'en-ws-beta', label: '海外（ws）-尝鲜', url: 'ws://agent-en-dm.vkcto.com:32030/ws' },
+      { id: 'cn-wss-beta', label: '国内（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
+      { id: 'en-wss-beta', label: '海外（wss）-尝鲜', url: 'wss://agent-en-dm.vkcto.com:9441/ws' },
+      { id: 'agent-zh-test', label: '测试', url: 'ws://agent-zh-test.vkcto.com:32028/ws' },
+      { id: 'agent-zh-dev', label: '开发', url: 'ws://agent-zh-dev.vkcto.com:32027/ws' },
+      { id: 'localhost-wss', label: '本地（wss）', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
+      { id: 'localhost-ws', label: '本地（ws）', url: 'ws://localhost:32028/ws' },
+      { id: 'custom', label: '自定义', url: '' },
+    ] as const;
+  }, []);
+
+  type WsPresetId = typeof wsPresets[number]['id'];
+
+  const [wsPresetId, setWsPresetId] = useState<WsPresetId>('default');
+  const [wsUrl, setWsUrl] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
+  const [wsInput, setWsInput] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
+  const [isSwitchingWs, setIsSwitchingWs] = useState(false);
+
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
 
@@ -165,6 +193,14 @@ export const App = () => {
 
     preloadVADModel();
   }, [])
+
+  useEffect(() => {
+    const current = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
+    setWsUrl(current);
+    setWsInput(current);
+    const matched = wsPresets.find(p => p.url && p.url === current);
+    setWsPresetId((matched?.id ?? 'custom') as WsPresetId);
+  }, [wsPresets]);
 
   // 响应速度监控相关状态
   const [responseMetrics, setResponseMetrics] = useState<{
@@ -202,6 +238,57 @@ export const App = () => {
     isPlayingDownstreamAudioRef.current = isPlayingDownstreamAudio;
   }, [isPlayingDownstreamAudio]);
 
+  const resetPerformanceMonitor = useCallback((reason: string) => {
+    console.log(`[PERF MONITOR] reset (${reason})`);
+
+    setResponseMetrics({
+      audioResponseTimes: [],
+      averageAudioLatency: 0,
+      totalInteractions: 0,
+      lastAudioLatency: 0,
+      isTimingActive: false
+    });
+
+    speechStartTimeRef.current = null;
+    hasRecordedResponse.current = false;
+
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    const connectionManager = voiceChatCore?.getConnectionManager();
+    connectionManager?.clearPerformanceMetrics?.();
+  }, []);
+
+  const applyWebSocketUrl = useCallback(async (nextUrl: string, presetId?: WsPresetId) => {
+    const trimmed = nextUrl.trim();
+    if (!trimmed) return;
+
+    const prevUrl = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
+    const presetLabel = presetId ? (wsPresets.find(p => p.id === presetId)?.label ?? presetId) : '(unknown)';
+
+    console.log('[WS CONFIG] switch:start', { presetId: presetId ?? null, presetLabel, from: prevUrl, to: trimmed });
+
+    // 切换环境时：重置性能监控（避免旧连接的数据污染新环境的统计）
+    resetPerformanceMonitor('ws_switch');
+
+    setStoredWebSocketUrl(trimmed);
+    setWsUrl(trimmed);
+    setWsInput(trimmed);
+
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    if (!voiceChatCore) return;
+
+    setIsSwitchingWs(true);
+    try {
+      voiceChatCore.disconnect();
+      await voiceChatCore.connect();
+      console.log('[WS CONFIG] switch:ok', { presetId: presetId ?? null, presetLabel, url: trimmed });
+    } catch (error) {
+      console.error('[WS CONFIG] switch:fail', { presetId: presetId ?? null, presetLabel, from: prevUrl, to: trimmed, error });
+      alert(`切换WebSocket失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsSwitchingWs(false);
+    }
+  }, [resetPerformanceMonitor, wsPresets]);
+
   // 切换性能监控状态
   const togglePerformanceMonitor = useCallback(() => {
     setIsPerformanceMonitorEnabled(prev => {
@@ -211,31 +298,12 @@ export const App = () => {
         console.log('[PERF MONITOR] 性能监控已启用');
       } else {
         console.log('[PERF MONITOR] 性能监控已禁用，清理数据...');
-
-        // 清理性能数据
-        setResponseMetrics({
-          audioResponseTimes: [],
-          averageAudioLatency: 0,
-          totalInteractions: 0,
-          lastAudioLatency: 0,
-          isTimingActive: false
-        });
-
-        // 清理计时器状态
-        speechStartTimeRef.current = null;
-        hasRecordedResponse.current = false;
-
-        // 清理高精度计时器缓存
-        const voiceChatCore = realTime.current?.getVoiceChatCore();
-        const connectionManager = voiceChatCore?.getConnectionManager();
-        if (connectionManager) {
-          console.log('[PERF MONITOR] 高精度计时器缓存已清理');
-        }
+        resetPerformanceMonitor('disabled');
       }
 
       return newState;
     });
-  }, []);
+  }, [resetPerformanceMonitor]);
 
   // 获取RealTime实例中的AudioManager
   const audioManagerRef = useRef<AudioManager | null>(null);
@@ -1497,6 +1565,58 @@ export const App = () => {
           </div>
           <div className={styles.squadySubtext}>
             {talkHint || (isUserSpeaking ? '正在聆听...' : '点击开始对话')}
+          </div>
+        </div>
+
+        <div className={styles.wsConfigBar}>
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>WS</span>
+            <select
+              value={wsPresetId}
+              onChange={async (e) => {
+                const id = e.target.value as WsPresetId;
+                setWsPresetId(id);
+                const preset = wsPresets.find(p => p.id === id);
+                if (preset && preset.id !== 'custom') {
+                  await applyWebSocketUrl(preset.url, id);
+                }
+              }}
+              disabled={isSwitchingWs}
+              className={styles.wsConfigSelect}
+            >
+              {wsPresets.map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+
+            {wsPresetId === 'custom' && (
+              <input
+                value={wsInput}
+                onChange={(e) => setWsInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter') {
+                    await applyWebSocketUrl(wsInput, 'custom');
+                  }
+                }}
+                placeholder="ws://host:port/path"
+                disabled={isSwitchingWs}
+                className={styles.wsConfigInput}
+              />
+            )}
+
+            {wsPresetId === 'custom' && (
+              <button
+                type="button"
+                onClick={async () => applyWebSocketUrl(wsInput, 'custom')}
+                disabled={isSwitchingWs}
+                className={styles.wsConfigButton}
+              >
+                Apply
+              </button>
+            )}
+          </div>
+          <div className={styles.wsConfigHint} title={wsUrl}>
+            当前: {wsUrl}
           </div>
         </div>
 

@@ -46,6 +46,10 @@ export class AudioRecorder {
     // Debug: correlate a "start -> stop" cycle (one user click start).
     private currentRunId: number | null = null;
 
+    // Stop must actually cancel the pipeline; otherwise the ReadableStream won't cancel
+    // and ingestAudioStream() cleanup (AudioContext.close, revokeObjectURL, etc) will never run.
+    private pipelineAbort: AbortController | null = null;
+
     // 明确无需自定义初始化逻辑，移除空构造器
 
     /**
@@ -216,6 +220,9 @@ export class AudioRecorder {
         deviceId: string | undefined,
         audioDataHandler: (audioData: Uint8Array) => void
     ): Promise<void> {
+        // Defensive: avoid stacking multiple pipelines on repeated start/stop clicks.
+        this.stopVADProcessing();
+
         this.currentRunId = ++__audioRecorderRunSeq;
         const runId = this.currentRunId;
         console.log('[AudioRecorder] startVADProcessing', {
@@ -246,6 +253,10 @@ export class AudioRecorder {
             trackCount: this.mediaStream?.getTracks().length ?? 0,
         });
 
+        // Pipe abort controller (critical for releasing AudioContext/Worklet on stop)
+        const abort = new AbortController();
+        this.pipelineAbort = abort;
+
         // 创建 VAD 转换流（仅做判定，不改动分片）
         this.vadTransform = this.createVADTransform({
             onSpeechStart: () => {
@@ -270,7 +281,10 @@ export class AudioRecorder {
         // VAD 分支：保持流动以触发判定回调
         const vadPipelinePromise = streamForVad
             .pipeThrough(this.vadTransform)
-            .pipeTo(new WritableStream<Float32Array>({ write: (): void => { /* no-op */ } }))
+            .pipeTo(
+                new WritableStream<Float32Array>({ write: (): void => { /* no-op */ } }),
+                { signal: abort.signal }
+            )
             .catch(error => { throw error; });
 
         // 编码分支：仅在说话时向下游发送数据
@@ -309,7 +323,7 @@ export class AudioRecorder {
                     const uint8Data = float32ToPcm16(audioData, this.pcmOutBuffer);
                     audioDataHandler(uint8Data);
                 }
-            }))
+            }), { signal: abort.signal })
             .catch(error => { throw error; });
 
         const pipelinePromise = Promise.all([vadPipelinePromise, encodePipelinePromise]);
@@ -329,6 +343,14 @@ export class AudioRecorder {
             trackCount: this.mediaStream?.getTracks().length ?? 0,
         });
 
+        // Critical: abort pipeTo -> triggers ReadableStream.cancel -> ingestAudioStream.cleanup()
+        if (this.pipelineAbort) {
+            try {
+                this.pipelineAbort.abort();
+            } catch (_e) { void 0; }
+            this.pipelineAbort = null;
+        }
+
         if (this.mediaStream) {
             this.mediaStream.getTracks().forEach(track => {
                 try { track.stop(); } catch (_e) { void 0; }
@@ -340,10 +362,8 @@ export class AudioRecorder {
         // 清理回溯缓冲
         this.preSpeechBuffer = [];
         this.needFlushPreBuffer = false;
-        // 清理回调函数引用，避免内存泄漏
-        this.onSpeechStartCallback = null;
-        this.onSpeechEndCallback = null;
-        this.onAudioDataCallback = null;
+        // NOTE: do NOT null callbacks here; AudioManager wires them once in constructor.
+        // Clearing them will make subsequent start() runs lose events (and complicate diagnosis).
         // 重置说话状态
         this.isSpeaking = false;
 

@@ -269,7 +269,7 @@ export class AudioPlayer {
 
         try {
             // 调试：记录音频数据到达情况和质量检查
-            const now = performance.now();
+            // (keep no per-chunk timestamp unless needed; logs are gated/commented to reduce noise)
 
             // 检查PCM数据的前几个样本，看是否有异常值
             const dataView = new DataView(audioData.buffer, audioData.byteOffset, Math.min(20, audioData.byteLength));
@@ -282,7 +282,7 @@ export class AudioPlayer {
                 // NOTE: noisy per-chunk log; keep commented unless debugging audio playback.
                 // console.log('[AudioPlayer] 🎵 收到音频数据:', {
                 //     dataSize: audioData.length,
-                //     timestamp: now.toFixed(2),
+                //     timestamp: performance.now().toFixed(2),
                 //     isPlaying: this.isPlaying,
                 //     firstSamples: firstSamples,
                 //     hasExtremeValues: firstSamples.some(s => Math.abs(s) > 30000)
@@ -352,7 +352,7 @@ export class AudioPlayer {
 
     // 清空音频队列 - 用于音频打断（高性能优化版本）
     clearQueue(): void {
-        const now = Date.now();
+        const now = performance.now();
 
         // 智能频率检查：防止过于频繁的清空操作
         if (now - this.lastClearTime < this.MIN_CLEAR_INTERVAL) {
@@ -392,7 +392,7 @@ export class AudioPlayer {
 
     // 强制重置播放器 - 用于彻底的音频打断（优化版本）
     forceReset(): void {
-        const now = Date.now();
+        const now = performance.now();
 
         // 智能频率检查：防止过于频繁的重置操作
         if (now - this.lastResetTime < this.MIN_RESET_INTERVAL) {

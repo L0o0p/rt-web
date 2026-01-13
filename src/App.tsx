@@ -165,7 +165,7 @@ export const App = () => {
       { id: 'en-wss', label: '9440（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
       { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
       { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
-      { id: 'new-asr', label: '32027(ws)', url: 'ws://agent-zh-dm.vkcto.com:32027/ws' },
+      { id: 'new-asr', label: '32027(ws)', url: 'wss://port2.luxhub.top:2097/ws' },
       { id: 'custom', label: '自定义', url: '' },
     ] as const;
   }, []);

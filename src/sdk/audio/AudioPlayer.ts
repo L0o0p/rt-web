@@ -304,9 +304,9 @@ export class AudioPlayer {
 
             // 音量检测和自动增益
             this.chunkCount++;
-            const sumSquared = floatData.reduce((sum, sample) => sum + sample * sample, 0);
-            const rms = Math.sqrt(sumSquared / floatData.length);
-            const avgAmplitude = floatData.reduce((sum, sample) => sum + Math.abs(sample), 0) / floatData.length;
+            // const sumSquared = floatData.reduce((sum, sample) => sum + sample * sample, 0);
+            // const rms = Math.sqrt(sumSquared / floatData.length);
+            // const avgAmplitude = floatData.reduce((sum, sample) => sum + Math.abs(sample), 0) / floatData.length;
 
             if (this.debugMode && this.chunkCount % 10 === 0) {
                 // console.log('[AudioPlayer] 📊 音量分析 (每10个chunk):', {

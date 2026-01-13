@@ -611,7 +611,8 @@ export class CombinedConnectionManager extends EventEmitter {
           return;
         }
 
-        console.log(`[SDK] 🔍 收到二进制消息，长度: ${dataSize} 字节 - 开始混合协议处理`);
+        // NOTE: noisy per-message log; uncomment only when debugging binary framing/parsing.
+        // console.log(`[SDK] 🔍 收到二进制消息，长度: ${dataSize} 字节 - 开始混合协议处理`);
 
         // 🔧 修复：支持混合协议处理
         // 尝试解析是否为混合协议消息（包含控制事件 + 二进制音频数据）

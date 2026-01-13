@@ -693,7 +693,8 @@ export const App = () => {
       // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
-        console.log('[type]:', eventName);
+        // NOTE: noisy per-event log; uncomment only when debugging WS event stream ordering.
+        // console.log('[type]:', eventName);
 
         switch (eventName) {
           case 'input_audio_buffer.speech_stopped': {
@@ -754,7 +755,8 @@ export const App = () => {
             const binaryAudioData = payload as any;
             if (!binaryAudioData || !binaryAudioData.audioData) return;
 
-            console.log('[APP] 🎵 收到二进制音频数据，准备播放');
+            // NOTE: noisy per-chunk log; uncomment only when debugging downstream audio playback.
+            // console.log('[APP] 🎵 收到二进制音频数据，准备播放');
 
             // ⚠️ 移除错误的自动打断逻辑
             // 流式音频应该连续推送到队列，而不是每次都清空

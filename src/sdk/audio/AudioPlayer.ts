@@ -279,13 +279,14 @@ export class AudioPlayer {
             }
 
             if (this.debugMode) {
-                console.log('[AudioPlayer] 🎵 收到音频数据:', {
-                    dataSize: audioData.length,
-                    timestamp: now.toFixed(2),
-                    isPlaying: this.isPlaying,
-                    firstSamples: firstSamples,
-                    hasExtremeValues: firstSamples.some(s => Math.abs(s) > 30000)
-                });
+                // NOTE: noisy per-chunk log; keep commented unless debugging audio playback.
+                // console.log('[AudioPlayer] 🎵 收到音频数据:', {
+                //     dataSize: audioData.length,
+                //     timestamp: now.toFixed(2),
+                //     isPlaying: this.isPlaying,
+                //     firstSamples: firstSamples,
+                //     hasExtremeValues: firstSamples.some(s => Math.abs(s) > 30000)
+                // });
             }
 
             // 性能优化：仅在数据异常时检查PCM数据质量
@@ -308,13 +309,13 @@ export class AudioPlayer {
             const avgAmplitude = floatData.reduce((sum, sample) => sum + Math.abs(sample), 0) / floatData.length;
 
             if (this.debugMode && this.chunkCount % 10 === 0) {
-                console.log('[AudioPlayer] 📊 音量分析 (每10个chunk):', {
-                    chunkCount: this.chunkCount,
-                    rms: rms.toFixed(4),
-                    avgAmplitude: avgAmplitude.toFixed(4),
-                    maxSample: Math.max(...Array.from(floatData).map(Math.abs)).toFixed(4),
-                    currentGain: this.autoGain
-                });
+                // console.log('[AudioPlayer] 📊 音量分析 (每10个chunk):', {
+                //     chunkCount: this.chunkCount,
+                //     rms: rms.toFixed(4),
+                //     avgAmplitude: avgAmplitude.toFixed(4),
+                //     maxSample: Math.max(...Array.from(floatData).map(Math.abs)).toFixed(4),
+                //     currentGain: this.autoGain
+                // });
             }
 
             // 应用增益（如果设置了）
@@ -335,7 +336,8 @@ export class AudioPlayer {
             if (this.playbackNode) {
                 this.playbackNode.port.postMessage({ type: 'push', samples: floatData }, [floatData.buffer]);
                 if (this.debugMode) {
-                    console.log('[AudioPlayer] ✅ 音频数据已推送到AudioWorklet队列');
+                    // NOTE: noisy per-chunk log; keep commented unless debugging audio playback.
+                    // console.log('[AudioPlayer] ✅ 音频数据已推送到AudioWorklet队列');
                 }
             } else {
                 console.warn('[AudioPlayer] ⚠️ AudioWorklet未初始化，无法播放音频');

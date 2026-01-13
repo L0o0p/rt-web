@@ -2,6 +2,10 @@ import { speechFilter, preloadModel } from '@steelbrain/media-speech-detection-w
 import { float32ToPcm16 } from './AudioUtils';
 import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
 
+// Debug-only counters to correlate start/stop and underlying AudioWorklet lifecycle.
+let __audioRecorderRunSeq = 0;
+let __ingestStreamSeq = 0;
+
 export class AudioRecorder {
     private mediaStream: MediaStream | null = null;
     private vadTransform: TransformStream<Float32Array, Float32Array> | null = null;
@@ -38,6 +42,9 @@ export class AudioRecorder {
 
     // 模型预加载状态
     private modelPreloaded: boolean = false;
+
+    // Debug: correlate a "start -> stop" cycle (one user click start).
+    private currentRunId: number | null = null;
 
     // 明确无需自定义初始化逻辑，移除空构造器
 
@@ -209,18 +216,35 @@ export class AudioRecorder {
         deviceId: string | undefined,
         audioDataHandler: (audioData: Uint8Array) => void
     ): Promise<void> {
+        this.currentRunId = ++__audioRecorderRunSeq;
+        const runId = this.currentRunId;
+        console.log('[AudioRecorder] startVADProcessing', {
+            runId,
+            deviceId: deviceId ?? null,
+            vadEnabled: this.vadEnabled,
+            lookBackDurationMs: this.lookBackDurationMs,
+            frameDurationMs: this.frameDurationMs,
+            threshold: this.vadThreshold,
+        });
+
         if (!this.vadEnabled) {
             this.vadEnabled = true;
         }
 
         // 启动前按需预加载模型（懒加载），失败不阻塞
         const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+        console.log('[AudioRecorder] startVADProcessing env', { runId, crossOriginIsolated: isIsolated });
         if (isIsolated) {
             await preloadModel();
         }
 
         // 获取音频流
         const audioStream = await this.getAudioStream(deviceId);
+        console.log('[AudioRecorder] got audio stream', {
+            runId,
+            hasMediaStream: !!this.mediaStream,
+            trackCount: this.mediaStream?.getTracks().length ?? 0,
+        });
 
         // 创建 VAD 转换流（仅做判定，不改动分片）
         this.vadTransform = this.createVADTransform({
@@ -298,6 +322,13 @@ export class AudioRecorder {
      * 停止VAD音频处理
      */
     stopVADProcessing(): void {
+        const runId = this.currentRunId;
+        console.log('[AudioRecorder] stopVADProcessing', {
+            runId,
+            hasMediaStream: !!this.mediaStream,
+            trackCount: this.mediaStream?.getTracks().length ?? 0,
+        });
+
         if (this.mediaStream) {
             this.mediaStream.getTracks().forEach(track => {
                 try { track.stop(); } catch (_e) { void 0; }
@@ -315,6 +346,8 @@ export class AudioRecorder {
         this.onAudioDataCallback = null;
         // 重置说话状态
         this.isSpeaking = false;
+
+        console.log('[AudioRecorder] stopVADProcessing done', { runId });
     }
 }
 
@@ -416,6 +449,7 @@ async function ingestAudioStream(
     if (!mediaStream.getAudioTracks().length) {
         throw new Error('MediaStream must contain at least one audio track');
     }
+    const ingestId = ++__ingestStreamSeq;
     let audioContext: AudioContext | null = null;
     let workletNode: AudioWorkletNode | null = null;
     let workletObjectUrl: string | null = null;
@@ -516,7 +550,14 @@ registerProcessor('resampler-processor', ResamplerProcessor);
         return URL.createObjectURL(blob);
     };
 
-    const cleanup = (): void => {
+    const cleanup = (reason: string): void => {
+        // This is the most important log: if you DON'T see it after stop, resources are leaking.
+        console.log('[AudioRecorder][ingestAudioStream] cleanup', {
+            ingestId,
+            reason,
+            hasWorkletNode: !!workletNode,
+            audioContextState: audioContext?.state ?? null,
+        });
         if (workletNode) { workletNode.disconnect(); workletNode = null; }
         if (audioContext) { audioContext.close(); audioContext = null; }
         if (workletObjectUrl) { try { URL.revokeObjectURL(workletObjectUrl); } catch { /* noop */ } workletObjectUrl = null; }
@@ -527,6 +568,12 @@ registerProcessor('resampler-processor', ResamplerProcessor);
             try {
                 audioContext = new AudioContext({ sampleRate: options.sampleRate ?? 16000, latencyHint: 'interactive' });
                 if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch { /* noop */ } }
+                console.log('[AudioRecorder][ingestAudioStream] start', {
+                    ingestId,
+                    audioContextState: audioContext.state,
+                    inputSampleRate: options.sampleRate ?? 16000,
+                    targetSampleRate: options.targetSampleRate ?? (options.sampleRate ?? 16000),
+                });
                 workletObjectUrl = createResamplerWorkletURL();
                 await audioContext.audioWorklet.addModule(workletObjectUrl);
                 const inputSampleRate = options.sampleRate ?? 16000;
@@ -547,7 +594,11 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                 workletNode.port.onmessage = (event: MessageEvent<{ type: string; data: Float32Array }>): void => {
                     const { type, data } = event.data;
                     if (type === 'audioData') {
-                        try { controller.enqueue(data); } catch { cleanup(); }
+                        try {
+                            controller.enqueue(data);
+                        } catch (_e) {
+                            cleanup('controller.enqueue failed');
+                        }
                     }
                 };
                 const source = audioContext.createMediaStreamSource(mediaStream);
@@ -557,6 +608,6 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                 throw new Error(`AudioWorklet setup failed: ${error instanceof Error ? error.message : String(error)}`);
             }
         },
-        cancel: (): void => { cleanup(); },
+        cancel: (): void => { cleanup('ReadableStream.cancel'); },
     });
 }

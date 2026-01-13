@@ -166,6 +166,7 @@ export const App = () => {
       { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
       { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
       { id: 'new-asr', label: '32027(ws)', url: 'wss://port2.luxhub.top:2097/ws' },
+      { id: 'new-asr1', label: '32028(ws)', url: 'wss://port1.luxhub.top:2097/ws' },
       { id: 'localdev', label: 'local', url: 'ws://127.0.0.1:8080/ws' },
       { id: 'custom', label: '自定义', url: '' },
     ] as const;

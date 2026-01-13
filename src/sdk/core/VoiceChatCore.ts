@@ -100,6 +100,28 @@ export class VoiceChatCore extends EventEmitter {
   }
 
   /**
+   * 发送 stopInput 消息（VAD语音结束时调用）
+   * 用于通知服务端用户语音输入已停止
+   * @param eventId 事件ID（可选，自动生成）
+   * @param audioEndMs 音频结束时间戳（毫秒，可选，自动计算）
+   * @param itemId 消息项ID（可选）
+   * @param useBinary 是否使用二进制格式（默认false，使用JSON格式）
+   */
+  public sendStopInput(eventId?: string, audioEndMs?: number, itemId?: string, useBinary: boolean = false): void {
+    if (this.isDestroyed) {
+      logger.warn('[VoiceChatCore] 实例已销毁，无法发送stopInput');
+      return;
+    }
+
+    if (!this.connectionManager.isConnected) {
+      logger.warn('[VoiceChatCore] WebSocket未连接，无法发送stopInput');
+      return;
+    }
+
+    this.connectionManager.sendStopInput(eventId, audioEndMs, itemId, useBinary);
+  }
+
+  /**
    * 发送已编码的音频数据
    */
   public sendEncodedAudioData(audioData: Uint8Array): boolean {

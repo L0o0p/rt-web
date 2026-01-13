@@ -11,11 +11,37 @@ export class RealTime {
     private nextSendAt: number | null = null;
 
     constructor() {
+        // 音色：默认（不发 voice_setting） vs 指定 voice_id（由 checkbox 控制）
+        const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
+        // 兼容旧 key：use_custom_voice = 1/0
+        const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
+        const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
+        const useCustomVoice = (() => {
+            try {
+                const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY);
+                if (preset === 'soft') return true;
+                if (preset === 'default') return false;
+                const legacy = localStorage.getItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY);
+                return legacy === '1' || legacy === 'true';
+            } catch {
+                return false;
+            }
+        })();
+
         const defaultConfig: Partial<SessionConfigPayload> = {
             asr_language: 'zh',
             mode: 'vad',
             timezone: 'Asia/Shanghai',
-            location: '中国'
+            location: '中国',
+            ...(useCustomVoice ? {
+                voice_setting: {
+                    // voice_setting 结构与 iOS/Flutter 对齐：{ voice_id, speed, pitch, vol }
+                    voice_id: CUSTOM_VOICE_ID,
+                    speed: 1.0,
+                    pitch: 0,
+                    vol: 1.0
+                }
+            } : {})
         };
         this.voiceChatCore = new VoiceChatCore(defaultConfig);
     }

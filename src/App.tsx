@@ -29,6 +29,8 @@ import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { useReminderHandler } from './hooks/useReminderHandler';
 import { useCameraHandler } from './hooks/useCameraHandler';
 import { ReminderPanel } from './components/ReminderPanel';
+import { DEFAULT_WEBSOCKET_URL } from './sdk/types/protocol';
+import { getRuntimeWebSocketUrl, setStoredWebSocketUrl } from './sdk/config/runtimeConfig';
 
 // 趋势图组件
 const TrendChart = React.memo(({ responseMetrics }: {
@@ -119,6 +121,22 @@ export const App = () => {
   const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
   const [talkHint, setTalkHint] = useState<string>(''); // 移动端点击“开始对话”无反馈时用于提示原因
 
+  // Voice (TTS) config
+  const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
+  const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
+  const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
+  type VoicePreset = 'default' | 'soft';
+  const [voicePreset, setVoicePreset] = useState<VoicePreset>(() => {
+    try {
+      const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY) as VoicePreset | null;
+      if (preset === 'default' || preset === 'soft') return preset;
+      const legacy = localStorage.getItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY);
+      return (legacy === '1' || legacy === 'true') ? 'soft' : 'default';
+    } catch {
+      return 'default';
+    }
+  });
+
   const [vadThreshold, setVadThreshold] = useState(0.5);
   const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
   // 图像上传相关状态
@@ -138,6 +156,28 @@ export const App = () => {
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
 
   const realTime = useRef<any>()
+  // take_photo/tool call 闭环去重：避免 arguments.done / function_call.done 两个分支重复回传
+  const takePhotoAckedCallIdsRef = useRef<Set<string>>(new Set())
+
+  const wsPresets = useMemo(() => {
+    return [
+      { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },
+      { id: 'en-wss', label: '9440（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
+      { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
+      { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
+      { id: 'new-asr', label: '32027(ws)', url: 'ws://agent-zh-dm.vkcto.com:32027/ws' },
+      { id: 'custom', label: '自定义', url: '' },
+    ] as const;
+  }, []);
+
+  type WsPresetId = typeof wsPresets[number]['id'];
+
+  const [wsPresetId, setWsPresetId] = useState<WsPresetId>('default');
+  const [wsUrl, setWsUrl] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
+  const [wsInput, setWsInput] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
+  const [isSwitchingWs, setIsSwitchingWs] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(''); // 展示当前 sessionId
+  const [sessionIdInput, setSessionIdInput] = useState<string>(''); // 手动传入 sessionId
 
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
@@ -165,6 +205,17 @@ export const App = () => {
 
     preloadVADModel();
   }, [])
+
+  useEffect(() => {
+    const current = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
+    setWsUrl(current);
+    setWsInput(current);
+    const matched = wsPresets.find(p => p.url && p.url === current);
+    setWsPresetId((matched?.id ?? 'custom') as WsPresetId);
+
+    // 启动时打印当前实际生效的环境（从 localStorage 覆盖 + 默认值综合后的结果）
+    console.log('[WS CONFIG] boot', { presetId: matched?.id ?? 'custom', presetLabel: matched?.label ?? '自定义', url: current });
+  }, [wsPresets]);
 
   // 响应速度监控相关状态
   const [responseMetrics, setResponseMetrics] = useState<{
@@ -202,6 +253,48 @@ export const App = () => {
     isPlayingDownstreamAudioRef.current = isPlayingDownstreamAudio;
   }, [isPlayingDownstreamAudio]);
 
+  const resetPerformanceMonitor = useCallback((reason: string) => {
+    console.log(`[PERF MONITOR] reset (${reason})`);
+
+    setResponseMetrics({
+      audioResponseTimes: [],
+      averageAudioLatency: 0,
+      totalInteractions: 0,
+      lastAudioLatency: 0,
+      isTimingActive: false
+    });
+
+    speechStartTimeRef.current = null;
+    hasRecordedResponse.current = false;
+
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    const connectionManager = voiceChatCore?.getConnectionManager();
+    connectionManager?.clearPerformanceMetrics?.();
+  }, []);
+
+  const applyWebSocketUrl = useCallback(async (nextUrl: string, presetId?: WsPresetId) => {
+    const trimmed = nextUrl.trim();
+    if (!trimmed) return;
+
+    const prevUrl = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
+    const presetLabel = presetId ? (wsPresets.find(p => p.id === presetId)?.label ?? presetId) : '(unknown)';
+
+    console.log('[WS CONFIG] switch:start', { presetId: presetId ?? null, presetLabel, from: prevUrl, to: trimmed });
+
+    // 切换环境时：重置性能监控（避免旧连接的数据污染新环境的统计）
+    resetPerformanceMonitor('ws_switch');
+
+    setStoredWebSocketUrl(trimmed);
+    setWsUrl(trimmed);
+    setWsInput(trimmed);
+
+    // 切换环境：直接刷新页面（相当于重启应用）
+    // 注意：环境变化通过 localStorage 写入保证，刷新后 connect() 会读到新值。
+    setIsSwitchingWs(true);
+    console.log('[WS CONFIG] switch:reload', { presetId: presetId ?? null, presetLabel, url: trimmed });
+    window.location.reload();
+  }, [resetPerformanceMonitor, wsPresets]);
+
   // 切换性能监控状态
   const togglePerformanceMonitor = useCallback(() => {
     setIsPerformanceMonitorEnabled(prev => {
@@ -211,31 +304,12 @@ export const App = () => {
         console.log('[PERF MONITOR] 性能监控已启用');
       } else {
         console.log('[PERF MONITOR] 性能监控已禁用，清理数据...');
-
-        // 清理性能数据
-        setResponseMetrics({
-          audioResponseTimes: [],
-          averageAudioLatency: 0,
-          totalInteractions: 0,
-          lastAudioLatency: 0,
-          isTimingActive: false
-        });
-
-        // 清理计时器状态
-        speechStartTimeRef.current = null;
-        hasRecordedResponse.current = false;
-
-        // 清理高精度计时器缓存
-        const voiceChatCore = realTime.current?.getVoiceChatCore();
-        const connectionManager = voiceChatCore?.getConnectionManager();
-        if (connectionManager) {
-          console.log('[PERF MONITOR] 高精度计时器缓存已清理');
-        }
+        resetPerformanceMonitor('disabled');
       }
 
       return newState;
     });
-  }, []);
+  }, [resetPerformanceMonitor]);
 
   // 获取RealTime实例中的AudioManager
   const audioManagerRef = useRef<AudioManager | null>(null);
@@ -1121,6 +1195,22 @@ export const App = () => {
               console.log('[Camera] ✅ 识别到拍照意图，准备打开摄像头:', { fnName, callId, parsedArgs });
               void openCamera();
               console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
+
+              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
+                  takePhotoAckedCallIdsRef.current.add(callId)
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    action: 'take_photo',
+                    result: 'camera_open_requested',
+                  });
+                }
+              } else {
+                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
+              }
             }
             break;
           }
@@ -1182,6 +1272,22 @@ export const App = () => {
               console.log('[Camera] ✅ 识别到拍照意图(备用)，准备打开摄像头:', { fnName, callId, parsedArgs });
               void openCamera();
               console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
+
+              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
+                  takePhotoAckedCallIdsRef.current.add(callId)
+                  const voiceChatCore = realTime.current?.getVoiceChatCore();
+                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
+                  connectionManager?.sendFunctionCallOutput?.(callId, {
+                    status: 1,
+                    action: 'take_photo',
+                    result: 'camera_open_requested',
+                  });
+                }
+              } else {
+                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
+              }
             }
             break;
           }
@@ -1359,10 +1465,49 @@ export const App = () => {
       // console.log('[DEBUG] 会话状态更新:', newStatus);
       setSessionStatus(newStatus);
       setIsSessionCreated(voiceChatCore.isSessionCreated);
+      setCurrentSessionId(voiceChatCore.currentSessionId ?? '');
     } else {
       console.log('[DEBUG] VoiceChatCore 实例不可用');
     }
   }, [setIsSessionCreated]);
+
+  const applySessionId = useCallback(() => {
+    const trimmed = sessionIdInput.trim();
+    if (!trimmed) return;
+
+    const voiceChatCore = realTime.current?.getVoiceChatCore();
+    if (!voiceChatCore?.isConnected) {
+      alert('WebSocket未连接，无法切换sessionId');
+      return;
+    }
+
+    console.log('[SESSION] switch', { from: voiceChatCore.currentSessionId, to: trimmed });
+    resetPerformanceMonitor('session_switch');
+    voiceChatCore.getConnectionManager().recreateSession(trimmed);
+    setSessionIdInput('');
+  }, [resetPerformanceMonitor, sessionIdInput]);
+
+  const applyVoicePreset = useCallback((nextPreset: VoicePreset) => {
+    setVoicePreset(nextPreset);
+    try {
+      localStorage.setItem(VOICE_PRESET_STORAGE_KEY, nextPreset);
+      // 兼容旧 key：保持同步，避免其它地方还在读
+      localStorage.setItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY, nextPreset === 'soft' ? '1' : '0');
+    } catch { /* ignore */ }
+
+    const voice_setting = nextPreset === 'soft'
+      ? { voice_id: CUSTOM_VOICE_ID, speed: 1.0, pitch: 0, vol: 1.0 }
+      : undefined; // 默认：不发 voice_setting，让服务端走默认音色
+
+    // 1) 更新默认 config（下次连接也会带上/不带 voice_setting）
+    realTime.current?.setSessionConfig?.({ voice_setting });
+
+    // 2) 已连接：强制新 sessionId 立即生效
+    const voiceChatCore = realTime.current?.getVoiceChatCore?.();
+    if (voiceChatCore?.isConnected) {
+      voiceChatCore.startNewSession?.({ voice_setting });
+    }
+  }, []);
 
   useEffect(() => {
     const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
@@ -1497,6 +1642,106 @@ export const App = () => {
           </div>
           <div className={styles.squadySubtext}>
             {talkHint || (isUserSpeaking ? '正在聆听...' : '点击开始对话')}
+          </div>
+        </div>
+
+        <div className={styles.wsConfigBar}>
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>WS</span>
+            <select
+              value={wsPresetId}
+              onChange={async (e) => {
+                const id = e.target.value as WsPresetId;
+                setWsPresetId(id);
+                const preset = wsPresets.find(p => p.id === id);
+                if (preset && preset.id !== 'custom') {
+                  await applyWebSocketUrl(preset.url, id);
+                }
+              }}
+              disabled={isSwitchingWs}
+              className={styles.wsConfigSelect}
+            >
+              {wsPresets.map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+
+            {wsPresetId === 'custom' && (
+              <input
+                value={wsInput}
+                onChange={(e) => setWsInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter') {
+                    await applyWebSocketUrl(wsInput, 'custom');
+                  }
+                }}
+                placeholder="ws://host:port/path"
+                disabled={isSwitchingWs}
+                className={styles.wsConfigInput}
+              />
+            )}
+
+            {wsPresetId === 'custom' && (
+              <button
+                type="button"
+                onClick={async () => applyWebSocketUrl(wsInput, 'custom')}
+                disabled={isSwitchingWs}
+                className={styles.wsConfigButton}
+              >
+                Apply
+              </button>
+            )}
+          </div>
+          <div className={styles.wsConfigHint} title={wsUrl}>
+            当前: {wsUrl}
+          </div>
+
+          <div className={styles.wsConfigHint} title={currentSessionId || undefined}>
+            Session: {currentSessionId || '--'}
+          </div>
+
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>Session</span>
+            <input
+              value={sessionIdInput}
+              onChange={(e) => setSessionIdInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applySessionId();
+              }}
+              placeholder="输入 sessionId（如16位）"
+              className={styles.wsConfigInput}
+              disabled={isSwitchingWs}
+            />
+            <button
+              type="button"
+              onClick={applySessionId}
+              disabled={isSwitchingWs}
+              className={styles.wsConfigButton}
+            >
+              Apply
+            </button>
+          </div>
+
+          <div className={styles.wsConfigRow}>
+            <span className={styles.wsConfigLabel}>Voice</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={voicePreset === 'default'}
+                disabled={isSwitchingWs}
+                onChange={(e) => { if (e.target.checked) applyVoicePreset('default'); }}
+              />
+              默认
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={voicePreset === 'soft'}
+                disabled={isSwitchingWs}
+                onChange={(e) => { if (e.target.checked) applyVoicePreset('soft'); }}
+              />
+              轻柔音色
+            </label>
           </div>
         </div>
 

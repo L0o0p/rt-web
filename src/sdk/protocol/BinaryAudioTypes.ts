@@ -183,7 +183,7 @@ export const DEFAULT_BINARY_AUDIO_CONFIG: BinaryAudioProtocolConfig = {
   enabled: false, // 默认禁用，需要显式启用
   fallbackToJson: true,
   enablePerformanceMonitoring: true,
-  enableDebugLogging: false,
+  enableDebugLogging: true,
   maxRetries: 3,
   decodeTimeout: 1000 // 1秒超时
 } as const;

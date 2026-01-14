@@ -1,7 +1,7 @@
 import { CONFIG, getWebSocketUrl } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
-import { CommandId, ProtocolId } from '../protocol/ClientProtocol';
-import type { WebSocketMessage, SessionConfigPayload, ClientBinaryMessage as BinaryMessage, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
+import { CommandId, ProtocolId, ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
+import type { WebSocketMessage, SessionConfigPayload, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
   BinaryMessageParser,
@@ -151,6 +151,58 @@ export class CombinedConnectionManager extends EventEmitter {
       }
     } else {
       logger.error('WebSocket未连接，无法发送消息');
+    }
+  }
+
+  /**
+   * 发送 stopInput 消息（VAD语音结束时调用）
+   * 方式1：WebSocket JSON 消息（推荐，带payload）
+   * 方式2：二进制消息（无payload）
+   * @param eventId 事件ID
+   * @param audioEndMs 音频结束时间戳（毫秒）
+   * @param itemId 消息项ID
+   * @param useBinary 是否使用二进制格式（默认false，使用JSON格式）
+   */
+  sendStopInput(eventId?: string, audioEndMs?: number, itemId?: string, useBinary: boolean = false): void {
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+      logger.error('[StopInput] WebSocket未连接，无法发送stopInput');
+      return;
+    }
+
+    if (!this.sessionId) {
+      logger.error('[StopInput] sessionId为空，无法发送stopInput');
+      return;
+    }
+
+    try {
+      if (useBinary) {
+        // 方式2：二进制消息
+        const binaryMessage = BinaryMessage.createStopInput(this.sessionId);
+        const bytes = binaryMessage.toBytes();
+        logger.info(`[StopInput] 发送二进制stopInput消息 - 会话ID: ${this.sessionId}, 大小: ${bytes.length}字节`);
+        this.websocket.send(bytes);
+      } else {
+        // 方式1：WebSocket JSON 消息（推荐）
+        const stopInputPayload = {
+          type: "input_audio_buffer.speech_stopped",
+          event_id: eventId || `event_${Date.now()}`,
+          audio_end_ms: audioEndMs || Math.floor(Date.now()),
+          item_id: itemId || ''
+        };
+
+        const fullMessage = {
+          protocol_id: ProtocolId.Asr,
+          command_id: CommandId.StopInput,
+          session_id: this.sessionId,
+          payload: stopInputPayload
+        } satisfies WebSocketMessage;
+
+        const messageStr = JSON.stringify(fullMessage);
+        logger.info(`[StopInput] 发送JSON stopInput消息 - 会话ID: ${this.sessionId}, payload:`, stopInputPayload);
+        this.websocket.send(messageStr);
+      }
+    } catch (error) {
+      logger.error(`[StopInput] 发送失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

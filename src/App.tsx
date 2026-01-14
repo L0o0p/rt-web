@@ -240,6 +240,9 @@ export const App = () => {
   // 用于跟踪请求时间的 Ref
   const speechStartTimeRef = useRef<number | null>(null);
   const hasRecordedResponse = useRef<boolean>(false);
+  
+  // 用于跟踪音频开始时间（用于计算 audio_end_ms）
+  const audioStartTimeRef = useRef<number>(0);
 
   // 用于在useEffect中访问最新状态的ref
   const isPerformanceMonitorEnabledRef = useRef(isPerformanceMonitorEnabled);
@@ -368,6 +371,10 @@ export const App = () => {
       setSpeechDetected(false);
       // console.debug("[APP] Cleared previous speech segments");
 
+      // 记录音频开始时间
+      audioStartTimeRef.current = Date.now();
+      console.log('[APP] 音频开始时间记录:', audioStartTimeRef.current);
+
       try {
         // 配置并启动AudioManager
         await audioManagerRef.current
@@ -427,9 +434,6 @@ export const App = () => {
       try {
         // 获取VoiceChatCore实例
         const voiceChatCore = realTime.current?.getVoiceChatCore();
-
-        // 不发送 StopInput：它更像“结束输入/结束会话”，会导致同一个 sessionId 无法再次开始。
-        // 停止对话只需要停本地采集即可（AudioManager.stop + enabled=false）。
 
         // 停止并禁用AudioManager，停止音频采集和发送
         await audioManagerRef.current
@@ -617,6 +621,30 @@ export const App = () => {
       // console.log('speech:end', speechAudio.length);
       setSpeechSegmentCount(prev => prev + 1); // 使用函数式更新避免闭包问题
       setSpeechDetected(false);
+
+      // ========== VAD语音结束，发送 stopInput ==========
+      const voiceChatCore = realTime.current?.getVoiceChatCore();
+      if (voiceChatCore?.isConnected && voiceChatCore?.isSessionCreated) {
+        // 计算 audio_end_ms
+        const audioEndMs = Date.now() - audioStartTimeRef.current;
+        const eventId = `event_${Date.now()}`;
+        const itemId = `msg_${Date.now().toString(36)}`;
+
+        console.log('[APP] VAD检测到语音结束，发送stopInput:', {
+          eventId,
+          audioEndMs,
+          itemId,
+          sessionId: voiceChatCore.currentSessionId
+        });
+
+        // 发送 stopInput 消息（JSON格式）
+        voiceChatCore.sendStopInput(eventId, audioEndMs, itemId, false);
+      } else {
+        console.warn('[APP] 无法发送stopInput: 连接状态或会话状态不满足条件', {
+          isConnected: voiceChatCore?.isConnected,
+          isSessionCreated: voiceChatCore?.isSessionCreated
+        });
+      }
     });
 
     audioManagerRef.current?.on('audio:data', (_audioData: Float32Array) => {

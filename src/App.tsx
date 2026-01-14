@@ -162,10 +162,11 @@ export const App = () => {
   const wsPresets = useMemo(() => {
     return [
       { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },
-      { id: 'en-wss', label: '9440（wss）-正式', url: 'wss://agent-en.vkcto.com:9440/ws' },
-      { id: 'cn-ws-beta', label: '32030（ws）-尝鲜', url: 'ws://agent-zh-dm.vkcto.com:32030/ws' },
-      { id: 'cn-wss-beta', label: '9441（wss）-尝鲜', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
-      { id: 'new-asr', label: '32027(ws)', url: 'wss://port2.luxhub.top:2097/ws' },
+      {
+        id: '27', label: '27(wss)', url: 'wss://port2.luxhub.top:2097/ws' },
+      { id: '28', label: '28(wss)', url: 'wss://port1.luxhub.top:2097/ws' },
+      { id: '29', label: '29(wss)', url: 'wss://agent-en.vkcto.com:9440/ws' },
+      { id: '30', label: '30(wss)', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
       { id: 'custom', label: '自定义', url: '' },
     ] as const;
   }, []);

@@ -1,0 +1,46 @@
+name: Build and Deploy (dev)
+
+on:
+  push:
+    branches: [ dev ]
+
+env:
+  REGISTRY: harbor.luxhub.top:2097
+  IMAGE_NAME: realtime-ts/realtime-ts-dev
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Log in to Harbor Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.HARBOR_USERNAME }}
+        password: ${{ secrets.HARBOR_PASSWORD }}
+
+    - name: Prepare image tags
+      id: meta
+      run: |
+        echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+        echo "sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "branch_sha_tag=${{ github.ref_name }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "branch_latest_tag=${{ github.ref_name }}-latest" >> $GITHUB_OUTPUT
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./dockerfile
+        platforms: linux/amd64
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.branch_sha_tag }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.branch_latest_tag }}
+        build-args: |
+          DOCKER_BUILDKIT=1
+

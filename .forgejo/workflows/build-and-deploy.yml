@@ -27,8 +27,10 @@ jobs:
     - name: Prepare image tags
       id: meta
       run: |
+        echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
         echo "sha_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-        echo "latest_tag=latest" >> $GITHUB_OUTPUT
+        echo "branch_sha_tag=${{ github.ref_name }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "branch_latest_tag=${{ github.ref_name }}-latest" >> $GITHUB_OUTPUT
 
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v5
@@ -38,8 +40,8 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.branch_sha_tag }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.branch_latest_tag }}
         build-args: |
           DOCKER_BUILDKIT=1
 
@@ -50,6 +52,6 @@ jobs:
           -H "Content-Type: application/json" \
           "${{ env.PORTAINER_WEBHOOK_URL }}" \
           -d '{
-            "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}",
-            "tag": "${{ steps.meta.outputs.sha_tag }}"
+            "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.branch_sha_tag }}",
+            "tag": "${{ steps.meta.outputs.branch_sha_tag }}"
           }'

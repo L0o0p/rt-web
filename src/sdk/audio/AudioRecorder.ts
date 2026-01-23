@@ -475,6 +475,18 @@ class ResamplerProcessor extends AudioWorkletProcessor {
     this.chunkCount = 0;
     this.needsResampling = this.inputSampleRate !== this.targetSampleRate;
 
+    // Debug: confirm what the worklet actually received (esp. on mobile Safari).
+    try {
+      this.port.postMessage({
+        type: 'debug',
+        inputSampleRate: this.inputSampleRate,
+        targetSampleRate: this.targetSampleRate,
+        targetBufferSize: this.targetBufferSize,
+        needsResampling: this.needsResampling,
+      });
+    } catch (e) {
+      // ignore
+    }
   }
   resampleAudioBuffer(inputBuffer) {
     if (!this.needsResampling) return inputBuffer;
@@ -596,6 +608,13 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                 // 令输出帧长度与 Opus 帧长一致：由固定字节数推导出样本数（单声道、S16LE -> 2 字节/样本）
                 const opusFrameSamples = Math.floor(AUDIO_QUALITY.FIXED_CHUNK_SIZE / 2);
                 const targetBufferSize = opusFrameSamples;
+
+                console.log('[AudioRecorder][ingestAudioStream] worklet processorOptions', {
+                    ingestId,
+                    inputSampleRate,
+                    targetSampleRate: outputSampleRate,
+                    targetBufferSize,
+                });
                 workletNode = new AudioWorkletNode(audioContext, 'resampler-processor', {
                     processorOptions: {
                         gain: options.gain ?? 1.0,
@@ -606,11 +625,17 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                     },
                     numberOfOutputs: 0,
                 });
-                workletNode.port.onmessage = (event: MessageEvent<{ type: string; data: Float32Array }>): void => {
-                    const { type, data } = event.data;
+                workletNode.port.onmessage = (event: MessageEvent<{ type: string; data?: Float32Array }>): void => {
+                    const payload = event.data as any;
+                    const { type } = payload;
+                    if (type === 'debug') {
+                        console.log('[AudioRecorder][ingestAudioStream] worklet debug', { ingestId, ...payload });
+                        return;
+                    }
+                    const data = payload.data as Float32Array | undefined;
                     if (type === 'audioData') {
                         try {
-                            controller.enqueue(data);
+                            if (data) controller.enqueue(data);
                         } catch (_e) {
                             cleanup('controller.enqueue failed');
                         }

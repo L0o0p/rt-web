@@ -6,6 +6,23 @@ import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
 let __audioRecorderRunSeq = 0;
 let __ingestStreamSeq = 0;
 
+function emitAudioRecorderDebug(detail: Record<string, unknown>): void {
+    // Keep last snapshot on window for quick inspection (mobile UI can read this too if needed).
+    const w = globalThis as unknown as {
+        __audioRecorderDebug?: Record<string, unknown>;
+        CustomEvent?: typeof CustomEvent;
+        dispatchEvent?: (evt: Event) => boolean;
+    };
+    try {
+        w.__audioRecorderDebug = { ...(w.__audioRecorderDebug ?? {}), ...detail };
+        if (typeof w.CustomEvent === 'function' && typeof w.dispatchEvent === 'function') {
+            w.dispatchEvent(new w.CustomEvent('audio-recorder:debug', { detail: w.__audioRecorderDebug }));
+        }
+    } catch {
+        // ignore
+    }
+}
+
 export class AudioRecorder {
     private mediaStream: MediaStream | null = null;
     private vadTransform: TransformStream<Float32Array, Float32Array> | null = null;
@@ -383,8 +400,6 @@ export interface WebRTCAudioOptions {
     autoGainControl?: boolean | { exact: boolean };
 }
 
-const PREFERRED_SAMPLE_RATES = Object.freeze([16000, 48000, 44100, 22050]);
-
 const RECOMMENDED_AUDIO_CONSTRAINTS: MediaTrackConstraints = Object.freeze({
     sampleRate: { ideal: 16000 },
     channelCount: 1,
@@ -393,70 +408,39 @@ const RECOMMENDED_AUDIO_CONSTRAINTS: MediaTrackConstraints = Object.freeze({
     autoGainControl: true,
 });
 
-async function detectBestSampleRate(deviceId?: string): Promise<number> {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('[Audio Detection] MediaDevices API not supported');
-        return 44100;
-    }
-    for (const sampleRate of PREFERRED_SAMPLE_RATES) {
-        try {
-            const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout')), 5000)
-            );
-            const constraints = {
-                audio: {
-                    deviceId: deviceId ? { exact: deviceId } : undefined,
-                    sampleRate: { exact: sampleRate },
-                    channelCount: 1,
-                },
-            };
-            const testStream = await Promise.race([
-                navigator.mediaDevices.getUserMedia(constraints),
-                timeoutPromise,
-            ]);
-            const audioTrack = testStream.getAudioTracks()[0];
-            const settings = audioTrack.getSettings();
-            testStream.getTracks().forEach(track => track.stop());
-            if (settings.sampleRate === sampleRate) {
-                return sampleRate;
-            }
-        } catch (_e) { /* try next */ }
-    }
-    const defaultStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            channelCount: 1,
-        },
-    });
-    const audioTrack = defaultStream.getAudioTracks()[0];
-    const settings = audioTrack.getSettings();
-    defaultStream.getTracks().forEach(track => track.stop());
-    return settings.sampleRate || 16000;
-}
-
 async function createWebRTCAudioStream(deviceId?: string, options: WebRTCAudioOptions = {}): Promise<{ mediaStream: MediaStream; audioStream: ReadableStream<Float32Array> }> {
-    let targetSampleRate = options.sampleRate;
-    if (!targetSampleRate) {
-        targetSampleRate = await detectBestSampleRate(deviceId);
-    }
     const baseConstraints = RECOMMENDED_AUDIO_CONSTRAINTS;
     const audioConstraints: MediaTrackConstraints = {
         deviceId: deviceId ? { exact: deviceId } : undefined,
         ...baseConstraints,
-        sampleRate: targetSampleRate,
         ...(options.echoCancellation !== undefined && { echoCancellation: options.echoCancellation }),
         ...(options.noiseSuppression !== undefined && { noiseSuppression: options.noiseSuppression }),
         ...(options.autoGainControl !== undefined && { autoGainControl: options.autoGainControl }),
     };
     const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     const audioTrack = mediaStream.getAudioTracks()[0];
-    const actualSampleRate = audioTrack?.getSettings().sampleRate || targetSampleRate;
+    const trackSettings = audioTrack?.getSettings?.() ?? {};
+    const trackSampleRate = (trackSettings as MediaTrackSettings).sampleRate;
+    console.log('[AudioRecorder] getUserMedia track settings', {
+        deviceId: deviceId ?? null,
+        trackSampleRate: trackSampleRate ?? null,
+        channelCount: (trackSettings as MediaTrackSettings).channelCount ?? null,
+        sampleSize: (trackSettings as MediaTrackSettings).sampleSize ?? null,
+    });
+    emitAudioRecorderDebug({
+        deviceId: deviceId ?? null,
+        trackSampleRate: trackSampleRate ?? null,
+        trackChannelCount: (trackSettings as MediaTrackSettings).channelCount ?? null,
+        trackSampleSize: (trackSettings as MediaTrackSettings).sampleSize ?? null,
+    });
     // 强制输出采样率为 Opus 期望的采样率
     const outputSampleRate = AUDIO_QUALITY.SAMPLE_RATE;
     const audioStream = await ingestAudioStream(mediaStream, {
         gain: options.gain,
         channelId: options.channelId,
-        sampleRate: actualSampleRate,
+        // Note: this is the track-reported sampleRate (may be null/incorrect on mobile).
+        // The actual AudioWorklet input sampleRate is AudioContext.sampleRate (logged in ingestAudioStream()).
+        sampleRate: trackSampleRate,
         targetSampleRate: outputSampleRate,
     });
     return { mediaStream, audioStream };
@@ -491,6 +475,18 @@ class ResamplerProcessor extends AudioWorkletProcessor {
     this.chunkCount = 0;
     this.needsResampling = this.inputSampleRate !== this.targetSampleRate;
 
+    // Debug: confirm what the worklet actually received (esp. on mobile Safari).
+    try {
+      this.port.postMessage({
+        type: 'debug',
+        inputSampleRate: this.inputSampleRate,
+        targetSampleRate: this.targetSampleRate,
+        targetBufferSize: this.targetBufferSize,
+        needsResampling: this.needsResampling,
+      });
+    } catch (e) {
+      // ignore
+    }
   }
   resampleAudioBuffer(inputBuffer) {
     if (!this.needsResampling) return inputBuffer;
@@ -586,21 +582,39 @@ registerProcessor('resampler-processor', ResamplerProcessor);
     return new ReadableStream<Float32Array>({
         start: async (controller: ReadableStreamDefaultController<Float32Array>): Promise<void> => {
             try {
-                audioContext = new AudioContext({ sampleRate: options.sampleRate ?? 16000, latencyHint: 'interactive' });
+                // Let the browser choose the hardware/native sampleRate.
+                // Mobile browsers may ignore the sampleRate constructor option and/or report track sampleRate inconsistently.
+                audioContext = new AudioContext({ latencyHint: 'interactive' });
                 if (audioContext.state === 'suspended') { try { await audioContext.resume(); } catch { /* noop */ } }
                 console.log('[AudioRecorder][ingestAudioStream] start', {
                     ingestId,
                     audioContextState: audioContext.state,
-                    inputSampleRate: options.sampleRate ?? 16000,
-                    targetSampleRate: options.targetSampleRate ?? (options.sampleRate ?? 16000),
+                    trackSampleRate: options.sampleRate ?? null,
+                    audioContextSampleRate: audioContext.sampleRate,
+                    targetSampleRate: options.targetSampleRate ?? audioContext.sampleRate,
+                });
+                emitAudioRecorderDebug({
+                    ingestId,
+                    audioContextState: audioContext.state,
+                    trackSampleRate: options.sampleRate ?? null,
+                    audioContextSampleRate: audioContext.sampleRate,
+                    targetSampleRate: options.targetSampleRate ?? audioContext.sampleRate,
                 });
                 workletObjectUrl = createResamplerWorkletURL();
                 await audioContext.audioWorklet.addModule(workletObjectUrl);
-                const inputSampleRate = options.sampleRate ?? 16000;
+                // Critical: AudioWorkletProcessor processes at AudioContext.sampleRate, not track settings.
+                const inputSampleRate = audioContext.sampleRate;
                 const outputSampleRate = options.targetSampleRate ?? inputSampleRate;
                 // 令输出帧长度与 Opus 帧长一致：由固定字节数推导出样本数（单声道、S16LE -> 2 字节/样本）
                 const opusFrameSamples = Math.floor(AUDIO_QUALITY.FIXED_CHUNK_SIZE / 2);
                 const targetBufferSize = opusFrameSamples;
+
+                console.log('[AudioRecorder][ingestAudioStream] worklet processorOptions', {
+                    ingestId,
+                    inputSampleRate,
+                    targetSampleRate: outputSampleRate,
+                    targetBufferSize,
+                });
                 workletNode = new AudioWorkletNode(audioContext, 'resampler-processor', {
                     processorOptions: {
                         gain: options.gain ?? 1.0,
@@ -611,11 +625,17 @@ registerProcessor('resampler-processor', ResamplerProcessor);
                     },
                     numberOfOutputs: 0,
                 });
-                workletNode.port.onmessage = (event: MessageEvent<{ type: string; data: Float32Array }>): void => {
-                    const { type, data } = event.data;
+                workletNode.port.onmessage = (event: MessageEvent<{ type: string; data?: Float32Array }>): void => {
+                    const payload = event.data as any;
+                    const { type } = payload;
+                    if (type === 'debug') {
+                        console.log('[AudioRecorder][ingestAudioStream] worklet debug', { ingestId, ...payload });
+                        return;
+                    }
+                    const data = payload.data as Float32Array | undefined;
                     if (type === 'audioData') {
                         try {
-                            controller.enqueue(data);
+                            if (data) controller.enqueue(data);
                         } catch (_e) {
                             cleanup('controller.enqueue failed');
                         }

@@ -158,6 +158,9 @@ export const App = () => {
   const realTime = useRef<any>()
   // take_photo/tool call 闭环去重：避免 arguments.done / function_call.done 两个分支重复回传
   const takePhotoAckedCallIdsRef = useRef<Set<string>>(new Set())
+  const deviceControlAckedCallIdsRef = useRef<Set<string>>(new Set())
+  const visualQaTriggeredCallIdsRef = useRef<Set<string>>(new Set())
+  const pendingVisualQaRef = useRef<{ callId: string; question: string } | null>(null)
 
   const wsPresets = useMemo(() => {
     return [
@@ -720,6 +723,96 @@ export const App = () => {
 
       const handlers = new Map<string, (payload: unknown) => void>();
       // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
+      const sendVisualQaStopOutput = (callId: string, question: string) => {
+        const activeConnectionManager = realTime.current?.getVoiceChatCore()?.getConnectionManager() as any;
+        activeConnectionManager?.sendFunctionCallOutput?.(callId, {
+          ok: true,
+          action: 'get_visual_QA',
+          result: 'vision_image_data_pending',
+          question,
+        }, {
+          controlMode: 'stop',
+          isError: false,
+        });
+        console.log('[Vision] ✅ 已回传 get_visual_QA stop 工具结果，后续由 ImageData/vision 管线生成回答:', { callId });
+      };
+
+      const queryBrowserBattery = async () => {
+        const batteryNavigator = navigator as Navigator & {
+          getBattery?: () => Promise<{
+            level: number;
+            charging: boolean;
+            chargingTime: number;
+            dischargingTime: number;
+          }>;
+        };
+
+        if (typeof batteryNavigator.getBattery !== 'function') {
+          throw new Error('当前浏览器不支持电量查询');
+        }
+
+        const battery = await batteryNavigator.getBattery();
+        const levelRatio = Number.isFinite(battery.level) ? battery.level : 0;
+        const levelPercent = Math.round(Math.max(0, Math.min(1, levelRatio)) * 100);
+        const normalizeTime = (seconds: number) => Number.isFinite(seconds) ? seconds : null;
+
+        return {
+          level: levelPercent,
+          levelRatio,
+          charging: battery.charging,
+          chargingTimeSeconds: normalizeTime(battery.chargingTime),
+          dischargingTimeSeconds: normalizeTime(battery.dischargingTime),
+        };
+      };
+
+      const handleDeviceControlCall = async (callId: unknown, parsedArgs: any) => {
+        if (typeof callId !== 'string' || callId.length === 0) {
+          console.warn('[DeviceControl] call_id 为空，跳过 function_call_output 回传');
+          return;
+        }
+
+        if (deviceControlAckedCallIdsRef.current.has(callId)) {
+          return;
+        }
+        deviceControlAckedCallIdsRef.current.add(callId);
+
+        const voiceChatCore = realTime.current?.getVoiceChatCore();
+        const connectionManager = voiceChatCore?.getConnectionManager() as any;
+        const target = typeof parsedArgs?.target === 'string' ? parsedArgs.target : 'battery';
+        const actionMode = typeof parsedArgs?.actionMode === 'string' ? parsedArgs.actionMode : 'query';
+
+        try {
+          if (target !== 'battery' || actionMode !== 'query') {
+            throw new Error(`暂不支持的设备控制请求: target=${target}, actionMode=${actionMode}`);
+          }
+
+          const battery = await queryBrowserBattery();
+          connectionManager?.sendFunctionCallOutput?.(callId, {
+            status: 1,
+            target,
+            actionMode,
+            battery,
+            message: `当前电量 ${battery.level}%${battery.charging ? '，正在充电' : ''}`,
+          }, {
+            controlMode: 'llm',
+            isError: false,
+          });
+          console.log('[DeviceControl] ✅ 已回传电量查询工具结果:', { callId, battery });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '电量查询失败';
+          connectionManager?.sendFunctionCallOutput?.(callId, {
+            status: 0,
+            target,
+            actionMode,
+            error: message,
+          }, {
+            controlMode: 'llm',
+            isError: true,
+          });
+          console.warn('[DeviceControl] ⚠️ 电量查询失败，已回传错误工具结果:', { callId, message });
+        }
+      };
+
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
         // NOTE: noisy per-event log; uncomment only when debugging WS event stream ordering.
@@ -1209,8 +1302,34 @@ export const App = () => {
               }
             }
 
+            if (fnName === 'device_control') {
+              console.log('[DeviceControl] ✅ 识别到 device_control 工具调用:', { callId, parsedArgs });
+              void handleDeviceControlCall(callId, parsedArgs);
+            }
+
             // 处理拍照意图：兼容不同tool命名（take_photo / device_command 等）
             const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
+            const isVisualQaIntent = fnName === 'get_visual_QA';
+            if (isVisualQaIntent) {
+              const question = typeof parsedArgs?.question === 'string' && parsedArgs.question.trim().length > 0
+                ? parsedArgs.question.trim()
+                : '请描述我面前有什么';
+              console.log('[Vision] ✅ 识别到视觉问答工具调用，准备拍照并走 vision 管线:', { fnName, callId, question });
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!visualQaTriggeredCallIdsRef.current.has(callId)) {
+                  visualQaTriggeredCallIdsRef.current.add(callId);
+                  sendVisualQaStopOutput(callId, question);
+                  pendingVisualQaRef.current = { callId, question };
+                  void openCamera({ autoCapture: true });
+                }
+              } else {
+                pendingVisualQaRef.current = { callId: `visual_${Date.now()}`, question };
+                void openCamera({ autoCapture: true });
+                console.warn('[Vision] call_id 为空，仍会发送 ImageData，但无法关联原始工具调用');
+              }
+              console.log('[Vision] 摄像头打开请求已发出，将自动拍照并发送 ImageData 到 vision 管线');
+            }
+
             const isTakePhotoIntent =
               fnName === 'take_photo' ||
               // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
@@ -1288,8 +1407,34 @@ export const App = () => {
               }
             }
 
+            if (fnName === 'device_control') {
+              console.log('[DeviceControl] ✅ 识别到 device_control 工具调用(备用):', { callId, parsedArgs });
+              void handleDeviceControlCall(callId, parsedArgs);
+            }
+
             // 处理拍照意图（备用）：function_call.done 有时不带 function_name，只能靠 call_id / arguments 兜底
             const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
+            const isVisualQaIntent = fnName === 'get_visual_QA';
+            if (isVisualQaIntent) {
+              const question = typeof parsedArgs?.question === 'string' && parsedArgs.question.trim().length > 0
+                ? parsedArgs.question.trim()
+                : '请描述我面前有什么';
+              console.log('[Vision] ✅ 识别到视觉问答工具调用(备用)，准备拍照并走 vision 管线:', { fnName, callId, question });
+              if (typeof callId === 'string' && callId.length > 0) {
+                if (!visualQaTriggeredCallIdsRef.current.has(callId)) {
+                  visualQaTriggeredCallIdsRef.current.add(callId);
+                  sendVisualQaStopOutput(callId, question);
+                  pendingVisualQaRef.current = { callId, question };
+                  void openCamera({ autoCapture: true });
+                }
+              } else {
+                pendingVisualQaRef.current = { callId: `visual_${Date.now()}`, question };
+                void openCamera({ autoCapture: true });
+                console.warn('[Vision] call_id 为空，仍会发送 ImageData，但无法关联原始工具调用');
+              }
+              console.log('[Vision] 摄像头打开请求已发出，将自动拍照并发送 ImageData 到 vision 管线');
+            }
+
             const isTakePhotoIntent =
               fnName === 'take_photo' ||
               // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
@@ -1425,6 +1570,14 @@ export const App = () => {
       }
 
       console.log('[CAMERA] 收到捕获的照片，大小:', blob.size, '字节');
+      const pendingVisualQa = pendingVisualQaRef.current;
+      const prompt = pendingVisualQa?.question ?? '';
+      if (pendingVisualQa) {
+        console.log('[Vision] 使用视觉问答问题作为 ImageData prompt:', {
+          callId: pendingVisualQa.callId,
+          question: pendingVisualQa.question,
+        });
+      }
 
       // 检查连接状态
       const voiceChatCore = realTime.current?.getVoiceChatCore();
@@ -1449,11 +1602,14 @@ export const App = () => {
 
         console.log('[CAMERA] 照片数据准备完成，大小:', uint8Array.length, '字节');
 
-        // 发送照片数据（使用协议ID 100 - All，无提示词）
-        const result = realTime.current?.sendImageData(uint8Array, '', ProtocolId.All);
+        // 发送照片数据（使用协议ID 100 - All）。get_visual_QA 触发时把问题作为 prompt 交给 BE vision_tts。
+        const result = realTime.current?.sendImageData(uint8Array, prompt, ProtocolId.All);
 
         if (result) {
           console.log('[CAMERA] ✅ 照片发送成功，大小:', blob.size, '字节');
+          if (pendingVisualQa) {
+            console.log('[Vision] ✅ get_visual_QA 已转为 ImageData，等待 vision 管线返回文本/语音');
+          }
           console.log('[CAMERA] 📡 等待服务端响应...');
           // alert('照片已成功发送，请等待AI分析结果');
         } else {
@@ -1463,6 +1619,10 @@ export const App = () => {
       } catch (error) {
         console.error('[CAMERA] ❌ 照片处理失败:', error);
         alert(`照片处理失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      } finally {
+        if (pendingVisualQa) {
+          pendingVisualQaRef.current = null;
+        }
       }
     };
 

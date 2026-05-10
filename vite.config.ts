@@ -1,9 +1,16 @@
-import { defineConfig } from 'vite'
+import { defaultClientConditions, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  resolve: {
+    // Decision: local VAD is the only browser ONNX consumer here. Prefer
+    // onnxruntime-web's external-WASM build so the app owns the exact WASM
+    // files through src/sdk/audio/ortRuntime.ts. Keep Vite's default browser
+    // conditions too; this condition must not change unrelated package exports.
+    conditions: [...defaultClientConditions, 'onnxruntime-web-use-extern-wasm']
+  },
   plugins: [
     react({
       // 修复React 19兼容性问题

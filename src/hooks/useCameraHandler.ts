@@ -105,7 +105,7 @@ export const useCameraHandler = (): CameraHandler => {
                 try {
                     stream = await tryGetUserMedia(constraints);
                     break;
-                } catch (_e) {
+                } catch {
                     // Try the next camera constraint profile.
                 }
             }
@@ -193,7 +193,7 @@ export const useCameraHandler = (): CameraHandler => {
             const ensurePreview = async () => {
                 try {
                     await video.play();
-                } catch (_e) {
+                } catch {
                     const existing = document.getElementById('camera-preview-start');
                     if (existing) return;
                     const startBtn = document.createElement('button');

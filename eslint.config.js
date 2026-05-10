@@ -39,10 +39,14 @@ export default tseslint.config(
   {
     files: ['src/**/*.{ts,tsx}'],
     extends: [
-      reactHooks.configs['recommended-latest'],
+      reactHooks.configs.flat['recommended-latest'],
       reactRefresh.configs.vite,
     ],
     rules: {
+      // Repo decision: existing browser/runtime bootstrapping still syncs local UI state
+      // from localStorage and media setup effects. Keep this visible as warning while
+      // refactors move those values into lazy initializers or dedicated hooks.
+      'react-hooks/set-state-in-effect': 'warn',
       'react-refresh/only-export-components': 'warn',
     },
   },

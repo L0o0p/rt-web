@@ -1,10 +1,23 @@
 import { speechFilter, preloadModel } from '@steelbrain/media-speech-detection-web';
 import { float32ToPcm16 } from './AudioUtils';
 import { AUDIO_QUALITY } from "../protocol/ClientProtocol";
+import { configureOrtRuntimeForVad } from './ortRuntime';
 
 // Debug-only counters to correlate start/stop and underlying AudioWorklet lifecycle.
 let __audioRecorderRunSeq = 0;
 let __ingestStreamSeq = 0;
+let __vadModelPreloadPromise: Promise<void> | null = null;
+
+async function preloadVadModelOnce(): Promise<void> {
+    configureOrtRuntimeForVad();
+    if (!__vadModelPreloadPromise) {
+        __vadModelPreloadPromise = preloadModel().catch(error => {
+            __vadModelPreloadPromise = null;
+            throw error;
+        });
+    }
+    return __vadModelPreloadPromise;
+}
 
 function emitAudioRecorderDebug(detail: Record<string, unknown>): void {
     // Keep last snapshot on window for quick inspection (mobile UI can read this too if needed).
@@ -79,15 +92,9 @@ export class AudioRecorder {
             return;
         }
 
-        const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
-        if (!isIsolated) {
-            console.log('[AudioRecorder] 非跨域隔离环境，跳过模型预加载（按需加载）');
-            return;
-        }
-
         try {
             console.log('[AudioRecorder] 开始预加载 VAD 模型...');
-            await preloadModel();
+            await preloadVadModelOnce();
             this.modelPreloaded = true;
             console.log('[AudioRecorder] VAD 模型预加载完成');
         } catch (error) {
@@ -219,6 +226,9 @@ export class AudioRecorder {
         threshold?: number,
         noEmit?: boolean
     }): TransformStream<Float32Array, Float32Array> {
+        // Decision: keep VAD algorithm ownership in the upstream package. This
+        // wrapper only configures runtime/transport around speechFilter(); it
+        // must not reimplement or simplify Silero VAD behavior locally.
         return speechFilter({
             onSpeechStart: options.onSpeechStart,
             onSpeechEnd: options.onSpeechEnd,
@@ -258,8 +268,14 @@ export class AudioRecorder {
         // 启动前按需预加载模型（懒加载），失败不阻塞
         const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
         console.log('[AudioRecorder] startVADProcessing env', { runId, crossOriginIsolated: isIsolated });
-        if (isIsolated) {
-            await preloadModel();
+        // Decision: configure ORT before upstream speechFilter() initializes,
+        // but keep preload best-effort. A transient model fetch/cache failure
+        // must not block microphone capture; upstream VAD still owns session
+        // creation and will retry the actual model load.
+        try {
+            await preloadVadModelOnce();
+        } catch (error) {
+            console.warn('[AudioRecorder] VAD 模型启动前预加载失败，继续按需初始化:', error);
         }
 
         // 获取音频流

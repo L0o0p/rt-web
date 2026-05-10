@@ -1,8 +1,12 @@
 import { AudioManager } from './sdk/audio/AudioManager';
 import { VoiceChatCore } from './sdk/core/VoiceChatCore';
-import type { SessionConfigPayload } from './sdk/protocol/ClientProtocol';
-import { ProtocolId } from './sdk/protocol/ClientProtocol';
+import type { ProtocolId, SessionConfigPayload } from './sdk/protocol/ClientProtocol';
 import { float32ToPcm16 } from './sdk/audio/AudioUtils';
+import {
+    CUSTOM_VOICE_ID,
+    LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY,
+    VOICE_PRESET_STORAGE_KEY,
+} from './app/architectureDecisions';
 
 export class RealTime {
     private voiceChatCore: VoiceChatCore;
@@ -12,10 +16,6 @@ export class RealTime {
 
     constructor() {
         // 音色：默认（不发 voice_setting） vs 指定 voice_id（由 checkbox 控制）
-        const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
-        // 兼容旧 key：use_custom_voice = 1/0
-        const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
-        const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
         const useCustomVoice = (() => {
             try {
                 const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY);
@@ -121,5 +121,3 @@ export class RealTime {
         return this.voiceChatCore.sendImageData(imageData, prompt, protocolId);
     }
 }
-
-

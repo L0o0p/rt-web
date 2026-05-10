@@ -1,82 +1,31 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { useAtom } from 'jotai'
-import ReactMarkdown from 'react-markdown'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import styles from './App.module.scss'
-import squadyLogo from './assets/squady.png'
-import { isUserSpeakingAtom, logsAtom, wsConnectedAtom, sessionCreatedAtom } from './state'
-import { LiveAudioVisualizerComponent } from './component/audioVisualizer'
 import { RealTime } from './RealTime'
-import { StatusPoint } from './component/statusPoint'
-import type { AudioManager } from './sdk/audio/AudioManager'
-import type { AudioChunkPayload, ResponseAudioDeltaEvent, OutputAudioBufferStartedEvent, ResponseAudioDoneEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent, InputAudioSpeechStartedEvent, InputAudioSpeechStoppedEvent } from './sdk/protocol/ClientProtocol';
-import { ProtocolId } from './sdk/protocol/ClientProtocol';
+import type { AudioChunkPayload, ResponseAudioDeltaEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent } from './sdk/protocol/ClientProtocol';
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
-import { audioProcessor } from './sdk/audio/AudioCodec';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
-import type { VoiceChatCore } from './sdk';
 
-import {
-  decodeResponseAudioDeltaMessage
-} from './sdk/protocol/BinaryAudioDecoder';
-
-import type {
-  DecodedAudioDeltaMessage
-} from './sdk/protocol/BinaryAudioTypes';
-
-import { VisionTestPanel } from './components/VisionTestPanel';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { useReminderHandler } from './hooks/useReminderHandler';
 import { useCameraHandler } from './hooks/useCameraHandler';
+import { useImageSender } from './hooks/useImageSender';
+import { useToolCallHandler } from './hooks/useToolCallHandler';
+import { useRuntimeControls } from './hooks/useRuntimeControls';
+import { useSessionStatus } from './hooks/useSessionStatus';
+import { useDownstreamAudioPlayer } from './hooks/useDownstreamAudioPlayer';
+import { useLocalVadUplink } from './hooks/useLocalVadUplink';
 import { ReminderPanel } from './components/ReminderPanel';
-import { DEFAULT_WEBSOCKET_URL } from './sdk/types/protocol';
-import { getRuntimeWebSocketUrl, setStoredWebSocketUrl } from './sdk/config/runtimeConfig';
-
-// 趋势图组件
-const TrendChart = React.memo(({ responseMetrics }: {
-  responseMetrics: {
-    audioResponseTimes: number[];
-    averageAudioLatency: number;
-    totalInteractions: number;
-    lastAudioLatency: number;
-    isTimingActive: boolean;
-  }
-}) => {
-  const trendData = useMemo(() => {
-    const times = responseMetrics.audioResponseTimes.slice(-10);
-    return {
-      times,
-      minTime: Math.min(...responseMetrics.audioResponseTimes),
-      maxTime: Math.max(...responseMetrics.audioResponseTimes)
-    };
-  }, [responseMetrics.audioResponseTimes]);
-
-  return (
-    <div className={styles.responseTrend}>
-      <div className={styles.trendLabel}>音频响应延迟趋势（最近10次）</div>
-      <div className={styles.trendBars}>
-        {trendData.times.map((time: number, index: number) => (
-          <div
-            key={index}
-            className={styles.trendBar}
-            style={{
-              height: `${Math.min(time / 20, 50)}px`,
-              backgroundColor: time < 1000 ? '#4CAF50' : time < 2000 ? '#FF9800' : '#F44336'
-            }}
-            title={`第${responseMetrics.audioResponseTimes.length - 9 + index}次: ${time.toFixed(0)}ms`}
-          />
-        ))}
-      </div>
-      <div className={styles.trendStats}>
-        <span>最快: {trendData.minTime.toFixed(1)}ms</span>
-        <span>最慢: {trendData.maxTime.toFixed(1)}ms</span>
-        <span>精度: 1ms</span>
-      </div>
-    </div>
-  );
-});
-
-TrendChart.displayName = 'TrendChart';
+import { ImageResponsePanel } from './components/ImageResponsePanel';
+import { PerformanceMonitor } from './components/PerformanceMonitor';
+import { VoiceStage } from './components/VoiceStage';
+import { WebSocketSessionControls } from './components/WebSocketSessionControls';
+import {
+  WS_PRESETS,
+  createEmptyResponseMetrics,
+  type ResponseMetrics,
+} from './app/architectureDecisions';
+import { decodeDownstreamAudio } from './app/downstreamAudio';
 
 // 定义下行事件常量（参考 ClientProtocol.ts 中的服务端事件）
 const downstreamEvents = [
@@ -116,78 +65,44 @@ const downstreamEvents = [
 
 
 export const App = () => {
-  const [isUserSpeaking, setIsUserSpeaking] = useAtom(isUserSpeakingAtom)
-  const [speechDetected, setSpeechDetected] = useState(false);
-  const [speechSegmentCount, setSpeechSegmentCount] = useState(0);
-  const [talkHint, setTalkHint] = useState<string>(''); // 移动端点击“开始对话”无反馈时用于提示原因
-
-  // Voice (TTS) config
-  const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
-  const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
-  const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
-  type VoicePreset = 'default' | 'soft';
-  const [voicePreset, setVoicePreset] = useState<VoicePreset>(() => {
-    try {
-      const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY) as VoicePreset | null;
-      if (preset === 'default' || preset === 'soft') return preset;
-      const legacy = localStorage.getItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY);
-      return (legacy === '1' || legacy === 'true') ? 'soft' : 'default';
-    } catch {
-      return 'default';
-    }
-  });
-
-  const [vadThreshold, setVadThreshold] = useState(0.5);
-  const [isPlayingDownstreamAudio, setIsPlayingDownstreamAudio] = useState(false);
-  // 图像上传相关状态
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isImageUploading, setIsImageUploading] = useState(false);
-  const [imagePrompt, setImagePrompt] = useState<string>(''); // 图像提示词
-  const [isImageInputExpanded, setIsImageInputExpanded] = useState(true); // 图片输入框展开状态
   const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(false); // 默认展示响应显示
-  // 会话状态
-  const [sessionStatus, setSessionStatus] = useState<{ connected: boolean, sessionCreated: boolean }>({
-    connected: false,
-    sessionCreated: false
-  });
   // 展示下行文本（WS返回的文本）
   const [currentText, setCurrentText] = useState('');
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
 
-  const realTime = useRef<any>()
-  // take_photo/tool call 闭环去重：避免 arguments.done / function_call.done 两个分支重复回传
-  const takePhotoAckedCallIdsRef = useRef<Set<string>>(new Set())
-  const deviceControlAckedCallIdsRef = useRef<Set<string>>(new Set())
-  const visualQaTriggeredCallIdsRef = useRef<Set<string>>(new Set())
-  const pendingVisualQaRef = useRef<{ callId: string; question: string } | null>(null)
-
-  const wsPresets = useMemo(() => {
-    return [
-      { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },
-      {
-        id: '27', label: '27(wss)', url: 'wss://port2.luxhub.top:2097/ws' },
-      { id: '28', label: '28(wss)', url: 'wss://port1.luxhub.top:2097/ws' },
-      { id: '29', label: '29(wss)', url: 'wss://agent-en.vkcto.com:9440/ws' },
-      { id: '30', label: '30(wss)', url: 'wss://agent-zh-dm.vkcto.com:9441/ws' },
-      { id: 'custom', label: '自定义', url: '' },
-    ] as const;
-  }, []);
-
-  type WsPresetId = typeof wsPresets[number]['id'];
-
-  const [wsPresetId, setWsPresetId] = useState<WsPresetId>('default');
-  const [wsUrl, setWsUrl] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
-  const [wsInput, setWsInput] = useState<string>(() => getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL));
-  const [isSwitchingWs, setIsSwitchingWs] = useState(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string>(''); // 展示当前 sessionId
-  const [sessionIdInput, setSessionIdInput] = useState<string>(''); // 手动传入 sessionId
+  const realTime = useRef<RealTime>()
 
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
 
   // Camera 处理 Hook
-  const { openCamera, closeCamera, isCameraOpen } = useCameraHandler();
+  const { openCamera, closeCamera } = useCameraHandler();
+  const {
+    handleCancelImage,
+    handleImageSelect,
+    handleSendImage,
+    imagePreview,
+    imagePrompt,
+    isImageUploading,
+    selectedImage,
+    setImagePrompt,
+    setPendingVisualQa,
+  } = useImageSender({ realTimeRef: realTime });
+  const { handleToolCallEvent } = useToolCallHandler({
+    handleReminderCall,
+    openCamera,
+    realTimeRef: realTime,
+    setPendingVisualQa,
+  });
+  const handleToolCallEventRef = useRef(handleToolCallEvent);
+  const closeCameraRef = useRef(closeCamera);
+
+  useLayoutEffect(() => {
+    // Decision: the runtime event bridge is registered once, but the feature
+    // handlers it calls are allowed to evolve as UI state changes.
+    handleToolCallEventRef.current = handleToolCallEvent;
+    closeCameraRef.current = closeCamera;
+  }, [closeCamera, handleToolCallEvent]);
 
   useEffect(() => {
     realTime.current = new RealTime()
@@ -209,32 +124,10 @@ export const App = () => {
 
     preloadVADModel();
   }, [])
-
-  useEffect(() => {
-    const current = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
-    setWsUrl(current);
-    setWsInput(current);
-    const matched = wsPresets.find(p => p.url && p.url === current);
-    setWsPresetId((matched?.id ?? 'custom') as WsPresetId);
-
-    // 启动时打印当前实际生效的环境（从 localStorage 覆盖 + 默认值综合后的结果）
-    console.log('[WS CONFIG] boot', { presetId: matched?.id ?? 'custom', presetLabel: matched?.label ?? '自定义', url: current });
-  }, [wsPresets]);
+  const { currentSessionId, sessionStatus } = useSessionStatus({ realTimeRef: realTime });
 
   // 响应速度监控相关状态
-  const [responseMetrics, setResponseMetrics] = useState<{
-    audioResponseTimes: number[];
-    averageAudioLatency: number;
-    totalInteractions: number;
-    lastAudioLatency: number;
-    isTimingActive: boolean;
-  }>({
-    audioResponseTimes: [],
-    averageAudioLatency: 0,
-    totalInteractions: 0,
-    lastAudioLatency: 0,
-    isTimingActive: false
-  });
+  const [responseMetrics, setResponseMetrics] = useState<ResponseMetrics>(createEmptyResponseMetrics);
 
 
   // 性能监控开关状态
@@ -244,32 +137,18 @@ export const App = () => {
   const speechStartTimeRef = useRef<number | null>(null);
   const hasRecordedResponse = useRef<boolean>(false);
   
-  // 用于跟踪音频开始时间（用于计算 audio_end_ms）
-  const audioStartTimeRef = useRef<number>(0);
-
   // 用于在useEffect中访问最新状态的ref
   const isPerformanceMonitorEnabledRef = useRef(isPerformanceMonitorEnabled);
-  const isPlayingDownstreamAudioRef = useRef(isPlayingDownstreamAudio);
 
   // 使用useLayoutEffect更新ref值，避免重渲染
   useLayoutEffect(() => {
     isPerformanceMonitorEnabledRef.current = isPerformanceMonitorEnabled;
   }, [isPerformanceMonitorEnabled]);
 
-  useLayoutEffect(() => {
-    isPlayingDownstreamAudioRef.current = isPlayingDownstreamAudio;
-  }, [isPlayingDownstreamAudio]);
-
   const resetPerformanceMonitor = useCallback((reason: string) => {
     console.log(`[PERF MONITOR] reset (${reason})`);
 
-    setResponseMetrics({
-      audioResponseTimes: [],
-      averageAudioLatency: 0,
-      totalInteractions: 0,
-      lastAudioLatency: 0,
-      isTimingActive: false
-    });
+    setResponseMetrics(createEmptyResponseMetrics());
 
     speechStartTimeRef.current = null;
     hasRecordedResponse.current = false;
@@ -279,28 +158,20 @@ export const App = () => {
     connectionManager?.clearPerformanceMetrics?.();
   }, []);
 
-  const applyWebSocketUrl = useCallback(async (nextUrl: string, presetId?: WsPresetId) => {
-    const trimmed = nextUrl.trim();
-    if (!trimmed) return;
-
-    const prevUrl = getRuntimeWebSocketUrl(DEFAULT_WEBSOCKET_URL);
-    const presetLabel = presetId ? (wsPresets.find(p => p.id === presetId)?.label ?? presetId) : '(unknown)';
-
-    console.log('[WS CONFIG] switch:start', { presetId: presetId ?? null, presetLabel, from: prevUrl, to: trimmed });
-
-    // 切换环境时：重置性能监控（避免旧连接的数据污染新环境的统计）
-    resetPerformanceMonitor('ws_switch');
-
-    setStoredWebSocketUrl(trimmed);
-    setWsUrl(trimmed);
-    setWsInput(trimmed);
-
-    // 切换环境：直接刷新页面（相当于重启应用）
-    // 注意：环境变化通过 localStorage 写入保证，刷新后 connect() 会读到新值。
-    setIsSwitchingWs(true);
-    console.log('[WS CONFIG] switch:reload', { presetId: presetId ?? null, presetLabel, url: trimmed });
-    window.location.reload();
-  }, [resetPerformanceMonitor, wsPresets]);
+  const {
+    applySessionId,
+    applyVoicePreset,
+    applyWebSocketUrl,
+    isSwitchingWs,
+    sessionIdInput,
+    setSessionIdInput,
+    setWsInput,
+    setWsPresetId,
+    voicePreset,
+    wsInput,
+    wsPresetId,
+    wsUrl,
+  } = useRuntimeControls({ realTimeRef: realTime, resetPerformanceMonitor });
 
   // 切换性能监控状态
   const togglePerformanceMonitor = useCallback(() => {
@@ -318,251 +189,21 @@ export const App = () => {
     });
   }, [resetPerformanceMonitor]);
 
-  // 获取RealTime实例中的AudioManager
-  const audioManagerRef = useRef<AudioManager | null>(null);
-  const audioPlayerRef = useRef<AudioPlayer | null>(null);
-
-  // 传输定时器
-  const transmissionTimerRef = useRef<number | null>(null);
-  const nextSendAtRef = useRef<number | null>(null);
+  const {
+    audioPlayerRef,
+    enableDownstreamAudioPlayback,
+    isPlayingDownstreamAudio,
+    isPlayingDownstreamAudioRef,
+    toggleDownstreamAudioPlayback,
+  } = useDownstreamAudioPlayer();
 
   // 性能监控显示控制
   const [isPerformanceMonitorVisible, setIsPerformanceMonitorVisible] = useState(true);
+  const { isUserSpeaking, record, talkHint } = useLocalVadUplink({ realTimeRef: realTime });
 
   // 切换性能监控显示
   const togglePerformanceVisibility = useCallback(() => {
     setIsPerformanceMonitorVisible(prev => !prev);
-  }, []);
-
-  // 控制下行音频播放
-  const toggleDownstreamAudioPlayback = useCallback(() => {
-    setIsPlayingDownstreamAudio(prev => {
-      const newState = !prev;
-
-      // 初始化或清理AudioPlayer实例
-      if (newState) {
-        if (!audioPlayerRef.current) {
-          audioPlayerRef.current = new AudioPlayer();
-        }
-        // console.debug('[APP] Downstream audio playback enabled');
-      } else {
-        if (audioPlayerRef.current) {
-          audioPlayerRef.current.stopPlayback();
-          audioPlayerRef.current = null;
-        }
-        // console.debug('[APP] Downstream audio playback disabled');
-      }
-
-      return newState;
-    });
-  }, []);
-
-
-  const toggleVadProcessing = useCallback(async () => {
-    // console.debug("toggleVadProcessing called, isUserSpeaking:", isUserSpeaking);
-    if (!audioManagerRef.current) {
-      // console.debug("No audioManagerRef, returning");
-      setTalkHint('音频未就绪，请稍等 1s 再试');
-      return;
-    }
-
-    if (!isUserSpeaking) {
-      // console.debug("[APP] Starting VAD processing");
-
-      // 批量重置状态，减少重渲染
-      setSpeechSegmentCount(0);
-      setSpeechDetected(false);
-      // console.debug("[APP] Cleared previous speech segments");
-
-      // 记录音频开始时间
-      audioStartTimeRef.current = Date.now();
-      console.log('[APP] 音频开始时间记录:', audioStartTimeRef.current);
-
-      try {
-        // 配置并启动AudioManager
-        await audioManagerRef.current
-          .configure({
-            enabled: true,
-            threshold: vadThreshold,
-            loopback: false,
-            uplink: {
-              onChunkProcessed: async (chunk: Uint8Array) => {
-                // console.debug('[APP UPLINK] Processed audio chunk for uplink, size:', chunk.length, 'bytes');
-
-                // 检查数据是否为空
-                if (!chunk || chunk.length === 0) {
-                  // console.warn('[APP UPLINK] Warning: Empty audio chunk received, skipping send');
-                  return;
-                }
-
-                // 验证数据是否符合最小大小要求
-                if (chunk.length < 10) {
-                  // console.warn('[APP UPLINK] Warning: Audio chunk too small, size:', chunk.length, 'bytes, skipping send');
-                  return;
-                }
-
-                // 注意：计时器现在由 input_audio_buffer.speech_started 事件控制
-                // 这里只负责发送音频数据，不再重置计时器
-
-                // console.debug('[APP UPLINK] Sending audio chunk to server, size:', chunk.length, 'bytes');
-
-                // 获取VoiceChatCore实例并发送编码后的音频数据
-                const voiceChatCore = realTime.current?.getVoiceChatCore();
-                if (voiceChatCore) {
-                  const result = voiceChatCore.sendEncodedAudioData(chunk);
-                  if (!result) {
-                    // console.warn('[APP UPLINK] Warning: Failed to send audio chunk to server');
-                  } else {
-                    // console.debug('[APP UPLINK] Audio chunk sent to server successfully');
-                  }
-                } else {
-                  // console.warn('[APP UPLINK] VoiceChatCore instance not available');
-                }
-              }
-            }
-          })
-          .start();
-
-        // console.debug("[APP] VAD audio processing started");
-        setIsUserSpeaking(true);
-        setTalkHint('');
-
-      } catch (error) {
-        console.error('[APP] 启动麦克风/对话失败:', error);
-        setTalkHint('启动失败：请检查麦克风权限/HTTPS/静音模式');
-      }
-    } else {
-      // console.debug("[APP] Stopping VAD processing");
-
-      try {
-        // 获取VoiceChatCore实例
-        const voiceChatCore = realTime.current?.getVoiceChatCore();
-
-        // 停止并禁用AudioManager，停止音频采集和发送
-        await audioManagerRef.current
-          .stop()
-          .then(manager => manager.configure({ enabled: false }));
-
-        // console.debug("[APP] VAD audio processing stopped");
-        // 批量更新状态，减少重渲染次数
-        setIsUserSpeaking(false);
-        setSpeechDetected(false);
-        setSpeechSegmentCount(0);
-        setTalkHint('');
-
-      } catch (error) {
-        console.error('[APP] Error stopping VAD processing:', error);
-        setTalkHint('停止失败：请刷新重试');
-      }
-    }
-  }, [isUserSpeaking, vadThreshold, setIsUserSpeaking]);
-
-  const record = useCallback(() => {
-    // setIsUserSpeaking(!isUserSpeaking)
-    toggleVadProcessing()
-  }, [toggleVadProcessing]);
-
-  // 处理图像选择
-  const handleImageSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // 验证文件类型
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      alert('仅支持 JPEG、PNG、WebP 格式的图片');
-      return;
-    }
-
-    // 验证文件大小（5MB限制）
-    const maxSize = 5 * 1024 * 1024; // 5MB
-    if (file.size > maxSize) {
-      alert('图片文件大小不能超过 5MB');
-      return;
-    }
-
-    setSelectedImage(file);
-
-    // 创建预览
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setImagePreview(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-  }, []);
-
-  // 发送图像
-  const handleSendImage = useCallback(async () => {
-    if (!selectedImage || isImageUploading) return;
-
-    // 检查连接状态
-    const voiceChatCore = realTime.current?.getVoiceChatCore();
-    if (!voiceChatCore?.isConnected) {
-      alert('WebSocket未连接，请等待连接建立后再发送图像');
-      return;
-    }
-
-    if (!voiceChatCore?.isSessionCreated) {
-      alert('会话未创建，请先进行语音对话后再发送图像');
-      return;
-    }
-
-    console.log('[IMAGE] 开始发送图像，会话ID:', voiceChatCore.currentSessionId);
-
-    setIsImageUploading(true);
-    try {
-      // 将文件转换为 Uint8Array
-      const arrayBuffer = await selectedImage.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-
-      console.log('[IMAGE] 图像数据准备完成，大小:', uint8Array.length, '字节');
-      console.log('[IMAGE] 提示词:', imagePrompt || '(无提示词)');
-
-      // 发送图像数据（使用协议ID 100 - All，包含提示词）
-      const result = realTime.current?.sendImageData(uint8Array, imagePrompt, ProtocolId.All);
-
-      if (result) {
-        console.log(`[IMAGE] 图像发送成功: ${selectedImage.name}, 大小: ${selectedImage.size} 字节`);
-        console.log('[IMAGE] 等待服务器视觉分析响应...');
-
-        // 清理状态
-        setSelectedImage(null);
-        setImagePreview(null);
-        setImagePrompt(''); // 清理提示词
-        // 清理文件输入
-        const fileInput = document.getElementById('imageInput') as HTMLInputElement;
-        if (fileInput) {
-          fileInput.value = '';
-        }
-
-        // 显示成功提示
-        alert('图像已成功发送，请等待AI分析结果');
-      } else {
-        console.error('[IMAGE] 图像发送失败 - sendImageData返回false');
-        alert('图像发送失败，请检查连接状态和会话状态');
-      }
-    } catch (error) {
-      console.error('[IMAGE] 图像发送失败:', error);
-      alert(`图像发送失败: ${error instanceof Error ? error.message : '未知错误'}`);
-    } finally {
-      setIsImageUploading(false);
-    }
-  }, [selectedImage, isImageUploading]);
-
-  // 取消图像选择
-  const handleCancelImage = useCallback(() => {
-    setSelectedImage(null);
-    setImagePreview(null);
-    setImagePrompt(''); // 清理提示词
-    const fileInput = document.getElementById('imageInput') as HTMLInputElement;
-    if (fileInput) {
-      fileInput.value = '';
-    }
-  }, []);
-
-  // 切换图片输入框展开/折叠状态
-  const toggleImageInputExpanded = useCallback(() => {
-    setIsImageInputExpanded(prev => !prev);
   }, []);
 
   // 切换图片上传区域和响应文本显示区域的展开状态
@@ -570,103 +211,12 @@ export const App = () => {
     setIsImageUploadSectionExpanded(prev => !prev);
   }, []);
 
-  // // 音频传输控制
-  // const startAudioTransmission = () => {
-  //   if (transmissionTimerRef.current) return;
-
-  //   const TICK_MS = 50; // 更高精度，带漂移校正
-  //   nextSendAtRef.current = performance.now();
-
-  //   const tick = async () => {
-  //     // 注意：这里需要根据实际实现调整
-  //     // await realTime.transmitAudioData(audioDataBufferRef.current);
-  //     const now = performance.now();
-  //     const next = (nextSendAtRef.current ?? now) + TICK_MS;
-  //     nextSendAtRef.current = next;
-  //     const delay = Math.max(0, next - now);
-  //     transmissionTimerRef.current = window.setTimeout(tick, delay);
-  //   };
-
-  //   transmissionTimerRef.current = window.setTimeout(tick, 0);
-  // };
-
-  const stopAudioTransmission = () => {
-    if (transmissionTimerRef.current) {
-      window.clearTimeout(transmissionTimerRef.current);
-      transmissionTimerRef.current = null;
-    }
-    nextSendAtRef.current = null;
-  };
-
-
-
   useEffect(() => {
     realTime.current?.connectToServer()
-    // 直接调用状态设置，避免依赖回调函数
-    setIsPlayingDownstreamAudio(true);
-    if (!audioPlayerRef.current) {
-      audioPlayerRef.current = new AudioPlayer();
-    }
-  }, [])
+    enableDownstreamAudioPlayback();
+  }, [enableDownstreamAudioPlayback])
 
   useEffect(() => {
-
-    // 获取RealTime实例中的AudioManager
-    audioManagerRef.current = realTime.current?.getAudioManager();
-
-    // 设置事件监听器
-    audioManagerRef.current?.on('speech:start', () => {
-      // console.log('speech:start');
-      setSpeechDetected(true);
-    });
-
-    audioManagerRef.current?.on('speech:end', (_speechAudio: Float32Array) => {
-      // console.log('speech:end', speechAudio.length);
-      setSpeechSegmentCount(prev => prev + 1); // 使用函数式更新避免闭包问题
-      setSpeechDetected(false);
-
-      // ========== VAD语音结束，发送 stopInput ==========
-      const voiceChatCore = realTime.current?.getVoiceChatCore();
-      if (voiceChatCore?.isConnected && voiceChatCore?.isSessionCreated) {
-        // 计算 audio_end_ms
-        const audioEndMs = Date.now() - audioStartTimeRef.current;
-        const eventId = `event_${Date.now()}`;
-        const itemId = `msg_${Date.now().toString(36)}`;
-
-        console.log('[APP] VAD检测到语音结束，发送stopInput:', {
-          eventId,
-          audioEndMs,
-          itemId,
-          sessionId: voiceChatCore.currentSessionId
-        });
-
-        // 发送 stopInput 消息（JSON格式）
-        voiceChatCore.sendStopInput(eventId, audioEndMs, itemId, false);
-      } else {
-        console.warn('[APP] 无法发送stopInput: 连接状态或会话状态不满足条件', {
-          isConnected: voiceChatCore?.isConnected,
-          isSessionCreated: voiceChatCore?.isSessionCreated
-        });
-      }
-    });
-
-    audioManagerRef.current?.on('audio:data', (_audioData: Float32Array) => {
-      // suppressed
-    });
-
-    // 监听错误事件
-    audioManagerRef.current?.on('error', (_error: Error) => {
-      // suppressed
-    });
-
-    // 监听VAD配置变化
-    audioManagerRef.current?.on('vad:enabled', (_enabled: boolean) => {
-      // suppressed
-    });
-
-    audioManagerRef.current?.on('vad:threshold', (_threshold: number) => {
-      // suppressed
-    });
 
     // 监听VoiceChatCore的下行音频数据
     const voiceChatCore = realTime.current?.getVoiceChatCore();
@@ -723,96 +273,6 @@ export const App = () => {
 
       const handlers = new Map<string, (payload: unknown) => void>();
       // 移除外部缓冲累积逻辑，直接逐块播放下行PCM
-      const sendVisualQaStopOutput = (callId: string, question: string) => {
-        const activeConnectionManager = realTime.current?.getVoiceChatCore()?.getConnectionManager() as any;
-        activeConnectionManager?.sendFunctionCallOutput?.(callId, {
-          ok: true,
-          action: 'get_visual_QA',
-          result: 'vision_image_data_pending',
-          question,
-        }, {
-          controlMode: 'stop',
-          isError: false,
-        });
-        console.log('[Vision] ✅ 已回传 get_visual_QA stop 工具结果，后续由 ImageData/vision 管线生成回答:', { callId });
-      };
-
-      const queryBrowserBattery = async () => {
-        const batteryNavigator = navigator as Navigator & {
-          getBattery?: () => Promise<{
-            level: number;
-            charging: boolean;
-            chargingTime: number;
-            dischargingTime: number;
-          }>;
-        };
-
-        if (typeof batteryNavigator.getBattery !== 'function') {
-          throw new Error('当前浏览器不支持电量查询');
-        }
-
-        const battery = await batteryNavigator.getBattery();
-        const levelRatio = Number.isFinite(battery.level) ? battery.level : 0;
-        const levelPercent = Math.round(Math.max(0, Math.min(1, levelRatio)) * 100);
-        const normalizeTime = (seconds: number) => Number.isFinite(seconds) ? seconds : null;
-
-        return {
-          level: levelPercent,
-          levelRatio,
-          charging: battery.charging,
-          chargingTimeSeconds: normalizeTime(battery.chargingTime),
-          dischargingTimeSeconds: normalizeTime(battery.dischargingTime),
-        };
-      };
-
-      const handleDeviceControlCall = async (callId: unknown, parsedArgs: any) => {
-        if (typeof callId !== 'string' || callId.length === 0) {
-          console.warn('[DeviceControl] call_id 为空，跳过 function_call_output 回传');
-          return;
-        }
-
-        if (deviceControlAckedCallIdsRef.current.has(callId)) {
-          return;
-        }
-        deviceControlAckedCallIdsRef.current.add(callId);
-
-        const voiceChatCore = realTime.current?.getVoiceChatCore();
-        const connectionManager = voiceChatCore?.getConnectionManager() as any;
-        const target = typeof parsedArgs?.target === 'string' ? parsedArgs.target : 'battery';
-        const actionMode = typeof parsedArgs?.actionMode === 'string' ? parsedArgs.actionMode : 'query';
-
-        try {
-          if (target !== 'battery' || actionMode !== 'query') {
-            throw new Error(`暂不支持的设备控制请求: target=${target}, actionMode=${actionMode}`);
-          }
-
-          const battery = await queryBrowserBattery();
-          connectionManager?.sendFunctionCallOutput?.(callId, {
-            status: 1,
-            target,
-            actionMode,
-            battery,
-            message: `当前电量 ${battery.level}%${battery.charging ? '，正在充电' : ''}`,
-          }, {
-            controlMode: 'llm',
-            isError: false,
-          });
-          console.log('[DeviceControl] ✅ 已回传电量查询工具结果:', { callId, battery });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : '电量查询失败';
-          connectionManager?.sendFunctionCallOutput?.(callId, {
-            status: 0,
-            target,
-            actionMode,
-            error: message,
-          }, {
-            controlMode: 'llm',
-            isError: true,
-          });
-          console.warn('[DeviceControl] ⚠️ 电量查询失败，已回传错误工具结果:', { callId, message });
-        }
-      };
-
       // 创建统一的事件处理器
       const createEventHandler = (eventName: string) => (payload: unknown) => {
         // NOTE: noisy per-event log; uncomment only when debugging WS event stream ordering.
@@ -867,8 +327,8 @@ export const App = () => {
             console.log('[TEXT] Text done received:', textDoneEvt.text);
             setFinalTexts(prev => [textDoneEvt.text, ...prev].slice(0, 20));
             setCurrentText('');
-            // 收到服务器消息后折叠图片输入框
-            setIsImageInputExpanded(false);
+            // 收到服务器消息后回到响应显示区域，避免图片上传面板遮住结果。
+            setIsImageUploadSectionExpanded(false);
             break;
           }
 
@@ -917,94 +377,13 @@ export const App = () => {
                 return;
               }
 
-              // 调试：检查原始音频数据格式
-              const audioSlice = Array.from(audioData.slice(0, 16)) as number[];
-              const audioSlice100 = Array.from(audioData.slice(0, 100)) as number[];
-              console.debug('[APP] 🔍 原始音频数据详情:', {
-                dataSize: audioData.length,
-                firstFewBytes: audioSlice,
-                firstFewBytesHex: audioSlice.map(b => b.toString(16).padStart(2, '0')).join(' '),
-                dataType: audioData.constructor.name,
-                // 检查是否可能是Opus数据的特征
-                possibleOpusSignature: (Array.from(audioData.slice(0, 8)) as number[]).map((b: number) => b.toString(16).padStart(2, '0')).join(' '),
-                // 检查是否可能是PCM数据的特征（查看值范围）
-                minByteValue: Math.min(...audioSlice100),
-                maxByteValue: Math.max(...audioSlice100),
-                avgByteValue: audioSlice100.reduce((a: number, b: number) => a + b, 0) / 100
+              const pcmBytes = decodeDownstreamAudio({
+                bytes: audioData,
+                source: 'binary',
+                responseId: binaryAudioData.responseId,
+                itemId: binaryAudioData.itemId,
               });
-
-              let pcmBytes: Uint8Array;
-              let decodingMethod = '';
-
-              // 尝试Opus解码（二进制数据很可能仍然是Opus编码的）
-              try {
-                console.debug('[APP] 🎵 尝试对二进制音频数据进行Opus解码...');
-                const decoded = audioProcessor.decodeOpus(audioData);
-                if (decoded) {
-                  pcmBytes = decoded;
-                  decodingMethod = 'opus_decoded';
-                  console.debug('[APP] ✅ 二进制Opus解码成功，PCM数据大小:', pcmBytes.length);
-
-                  // 验证解码后的PCM数据特征
-                  if (pcmBytes.length > 0) {
-                    const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                    const firstSample = dataView.getInt16(0, true); // 小端序
-                    const secondSample = dataView.getInt16(2, true); // 小端序
-                    console.debug('[APP] 🔊 解码后PCM样本值 (小端序):', {
-                      firstSample,
-                      secondSample,
-                      firstSampleBigEndian: dataView.getInt16(0, false), // 大端序
-                      secondSampleBigEndian: dataView.getInt16(2, false) // 大端序
-                    });
-                  }
-                } else {
-                  throw new Error('Opus解码返回null');
-                }
-              } catch (opusError) {
-                console.warn('[APP] ❌ 二进制Opus解码失败，假设数据已经是PCM格式:', opusError);
-                pcmBytes = audioData;
-                decodingMethod = 'direct_pcm';
-
-                // 验证直接作为PCM的数据特征
-                if (pcmBytes.length >= 4) {
-                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                  const firstSampleLE = dataView.getInt16(0, true); // 小端序
-                  const firstSampleBE = dataView.getInt16(0, false); // 大端序
-                  console.debug('[APP] 🔊 直接PCM样本值对比:', {
-                    firstSampleLittleEndian: firstSampleLE,
-                    firstSampleBigEndian: firstSampleBE,
-                    sampleDifference: Math.abs(firstSampleLE - firstSampleBE),
-                    isLittleEndianReasonable: Math.abs(firstSampleLE) < 32768 && Math.abs(firstSampleLE) > 100,
-                    isBigEndianReasonable: Math.abs(firstSampleBE) < 32768 && Math.abs(firstSampleBE) > 100
-                  });
-                }
-              }
-
-              // 调试：检查最终PCM数据格式
-              console.debug('[APP] 📊 最终PCM数据详情:', {
-                dataSize: pcmBytes.length,
-                sampleCount: pcmBytes.length / 2, // PCM16 每个样本2字节
-                firstFewBytes: Array.from(pcmBytes.slice(0, 16)),
-                firstFewBytesHex: (Array.from(pcmBytes.slice(0, 16)) as number[]).map(b => b.toString(16).padStart(2, '0')).join(' '),
-                isEvenLength: pcmBytes.length % 2 === 0,
-                decodingMethod,
-                // 音频数据质量检查
-                audioQualityCheck: pcmBytes.length >= 4 ? (() => {
-                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                  const samples = [];
-                  for (let i = 0; i < Math.min(10, pcmBytes.length / 2); i++) {
-                    samples.push(dataView.getInt16(i * 2, true)); // 小端序
-                  }
-                  const maxSample = Math.max(...samples.map(Math.abs));
-                  const avgSample = samples.reduce((a, b) => a + Math.abs(b), 0) / samples.length;
-                  return {
-                    maxAbsSample: maxSample,
-                    avgAbsSample: avgSample,
-                    isReasonableRange: maxSample <= 32767 && avgSample > 10,
-                    sampleValues: samples.slice(0, 5)
-                  };
-                })() : null
-              });
+              if (!pcmBytes) return;
 
               // 播放音频数据
               if (audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
@@ -1054,101 +433,13 @@ export const App = () => {
               // 直接使用传统的JSON协议处理音频数据
               const opusBytes = base64ToUint8Array(audioDeltaEvt.delta);
 
-              // 调试：检查JSON协议的原始音频数据格式
-              const opusSlice = Array.from(opusBytes.slice(0, 16)) as number[];
-              const opusSlice100 = Array.from(opusBytes.slice(0, 100)) as number[];
-              console.debug('[APP] 🔍 JSON协议音频数据详情:', {
-                dataSize: opusBytes.length,
+              const pcmBytes = decodeDownstreamAudio({
+                bytes: opusBytes,
+                source: 'json',
                 responseId: audioDeltaEvt.response_id,
                 itemId: audioDeltaEvt.item_id,
-                firstFewBytes: opusSlice,
-                firstFewBytesHex: opusSlice.map(b => b.toString(16).padStart(2, '0')).join(' '),
-                // 检查是否可能是Opus数据的特征
-                possibleOpusSignature: (Array.from(opusBytes.slice(0, 8)) as number[]).map((b: number) => b.toString(16).padStart(2, '0')).join(' '),
-                // 检查是否可能是PCM数据的特征（查看值范围）
-                minByteValue: Math.min(...opusSlice100),
-                maxByteValue: Math.max(...opusSlice100),
-                avgByteValue: opusSlice100.reduce((a: number, b: number) => a + b, 0) / 100
               });
-
-              let pcmBytes: Uint8Array;
-              let decodingMethod = '';
-
-              // 尝试Opus解码
-              try {
-                console.debug('[APP] 🎵 尝试对JSON音频数据进行Opus解码...');
-                const decoded = audioProcessor.decodeOpus(opusBytes);
-                if (decoded) {
-                  pcmBytes = decoded;
-                  decodingMethod = 'opus_decoded';
-                  console.debug('[APP] ✅ JSON Opus解码成功，PCM数据大小:', pcmBytes.length);
-
-                  // 验证解码后的PCM数据特征
-                  if (pcmBytes.length > 0) {
-                    const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                    const firstSample = dataView.getInt16(0, true); // 小端序
-                    const secondSample = dataView.getInt16(2, true); // 小端序
-                    console.debug('[APP] 🔊 JSON解码后PCM样本值 (小端序):', {
-                      firstSample,
-                      secondSample,
-                      firstSampleBigEndian: dataView.getInt16(0, false), // 大端序
-                      secondSampleBigEndian: dataView.getInt16(2, false) // 大端序
-                    });
-                  }
-                } else {
-                  throw new Error('Opus解码返回null');
-                }
-              } catch (opusError) {
-                console.warn('[APP] ❌ JSON Opus解码失败，使用原始数据:', opusError);
-                pcmBytes = opusBytes;
-                decodingMethod = 'direct_pcm';
-
-                // 验证直接作为PCM的数据特征
-                if (pcmBytes.length >= 4) {
-                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                  const firstSampleLE = dataView.getInt16(0, true); // 小端序
-                  const firstSampleBE = dataView.getInt16(0, false); // 大端序
-                  console.debug('[APP] 🔊 JSON直接PCM样本值对比:', {
-                    firstSampleLittleEndian: firstSampleLE,
-                    firstSampleBigEndian: firstSampleBE,
-                    sampleDifference: Math.abs(firstSampleLE - firstSampleBE),
-                    isLittleEndianReasonable: Math.abs(firstSampleLE) < 32768 && Math.abs(firstSampleLE) > 100,
-                    isBigEndianReasonable: Math.abs(firstSampleBE) < 32768 && Math.abs(firstSampleBE) > 100
-                  });
-                }
-              }
-
-              // 调试：检查JSON协议最终PCM数据格式
-              console.debug('[APP] 📊 JSON最终PCM数据详情:', {
-                dataSize: pcmBytes.length,
-                sampleCount: pcmBytes.length / 2, // PCM16 每个样本2字节
-                firstFewBytes: Array.from(pcmBytes.slice(0, 16)),
-                firstFewBytesHex: (Array.from(pcmBytes.slice(0, 16)) as number[]).map(b => b.toString(16).padStart(2, '0')).join(' '),
-                isEvenLength: pcmBytes.length % 2 === 0,
-                decodingMethod,
-                // 音频数据质量检查
-                audioQualityCheck: pcmBytes.length >= 4 ? (() => {
-                  const dataView = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
-                  const samples = [];
-                  for (let i = 0; i < Math.min(10, pcmBytes.length / 2); i++) {
-                    samples.push(dataView.getInt16(i * 2, true)); // 小端序
-                  }
-                  const maxSample = Math.max(...samples.map(Math.abs));
-                  const avgSample = samples.reduce((a, b) => a + Math.abs(b), 0) / samples.length;
-                  return {
-                    maxAbsSample: maxSample,
-                    avgAbsSample: avgSample,
-                    isReasonableRange: maxSample <= 32767 && avgSample > 10,
-                    sampleValues: samples.slice(0, 5)
-                  };
-                })() : null
-              });
-
-              // 确保有音频数据
-              if (!pcmBytes || pcmBytes.length === 0) {
-                console.warn('[APP] 没有有效的音频数据，跳过播放');
-                return;
-              }
+              if (!pcmBytes) return;
 
               // 播放音频数据
               if (audioPlayerRef.current && isPlayingDownstreamAudioRef.current) {
@@ -1260,211 +551,12 @@ export const App = () => {
           }
 
           case 'response.function_call_arguments.done': {
-            // 处理 function_call_arguments.done 事件，识别工具调用
-            const functionCallPayload = payload as any;
-            console.log('[ToolCall] 收到事件:', eventName, functionCallPayload);
-
-            const fnName =
-              functionCallPayload?.function_name ||
-              functionCallPayload?.function?.name ||
-              functionCallPayload?.name;
-            const callId = functionCallPayload?.call_id;
-            let parsedArgs: any = undefined;
-            try {
-              parsedArgs = JSON.parse(functionCallPayload.arguments || '{}');
-            } catch (_e) {
-              // ignore
-            }
-
-            // 根据实际日志，字段名是 function_name 而不是 function.name
-            if (functionCallPayload?.function_name === 'reminder' || functionCallPayload?.function?.name === 'reminder') {
-              console.log('[Reminder] ✅ 识别到 reminder 工具调用:', functionCallPayload);
-              try {
-                const args = JSON.parse(functionCallPayload.arguments || '{}');
-                console.log('[Reminder] ✅ 解析参数:', args);
-                const reminder = handleReminderCall(args);
-
-                // ✅ 本地工具执行完毕后回传 function_call_output（闭环）
-                if (typeof callId === 'string' && callId.length > 0) {
-                  const voiceChatCore = realTime.current?.getVoiceChatCore();
-                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
-                  connectionManager?.sendFunctionCallOutput?.(callId, {
-                    status: 1,
-                    reminderId: reminder?.id,
-                    content: reminder?.content,
-                    startAt: reminder?.startAt,
-                  });
-                } else {
-                  console.warn('[Reminder] call_id 为空，跳过 function_call_output 回传');
-                }
-              } catch (error) {
-                console.error('[Reminder] ❌ 参数解析失败:', error);
-              }
-            }
-
-            if (fnName === 'device_control') {
-              console.log('[DeviceControl] ✅ 识别到 device_control 工具调用:', { callId, parsedArgs });
-              void handleDeviceControlCall(callId, parsedArgs);
-            }
-
-            // 处理拍照意图：兼容不同tool命名（take_photo / device_command 等）
-            const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
-            const isVisualQaIntent = fnName === 'get_visual_QA';
-            if (isVisualQaIntent) {
-              const question = typeof parsedArgs?.question === 'string' && parsedArgs.question.trim().length > 0
-                ? parsedArgs.question.trim()
-                : '请描述我面前有什么';
-              console.log('[Vision] ✅ 识别到视觉问答工具调用，准备拍照并走 vision 管线:', { fnName, callId, question });
-              if (typeof callId === 'string' && callId.length > 0) {
-                if (!visualQaTriggeredCallIdsRef.current.has(callId)) {
-                  visualQaTriggeredCallIdsRef.current.add(callId);
-                  sendVisualQaStopOutput(callId, question);
-                  pendingVisualQaRef.current = { callId, question };
-                  void openCamera({ autoCapture: true });
-                }
-              } else {
-                pendingVisualQaRef.current = { callId: `visual_${Date.now()}`, question };
-                void openCamera({ autoCapture: true });
-                console.warn('[Vision] call_id 为空，仍会发送 ImageData，但无法关联原始工具调用');
-              }
-              console.log('[Vision] 摄像头打开请求已发出，将自动拍照并发送 ImageData 到 vision 管线');
-            }
-
-            const isTakePhotoIntent =
-              fnName === 'take_photo' ||
-              // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
-              fnName === 'device_command' ||
-              (typeof callId === 'string' && callId.includes('take_photo')) ||
-              (
-                // 兜底：device_command 类工具里带“拍照”指令
-                ((fnName && String(fnName).includes('device')) || (typeof callId === 'string' && callId.includes('device'))) &&
-                (argsStr.includes('take_photo') || argsStr.includes('拍照') || argsStr.includes('camera'))
-              );
-
-            if (isTakePhotoIntent) {
-              console.log('[Camera] ✅ 识别到拍照意图，准备打开摄像头:', { fnName, callId, parsedArgs });
-              void openCamera();
-              console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
-
-              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
-              if (typeof callId === 'string' && callId.length > 0) {
-                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
-                  takePhotoAckedCallIdsRef.current.add(callId)
-                  const voiceChatCore = realTime.current?.getVoiceChatCore();
-                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
-                  connectionManager?.sendFunctionCallOutput?.(callId, {
-                    status: 1,
-                    action: 'take_photo',
-                    result: 'camera_open_requested',
-                  });
-                }
-              } else {
-                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
-              }
-            }
+            handleToolCallEventRef.current(eventName, payload);
             break;
           }
 
           case 'response.function_call.done': {
-            // 处理 function_call.done 事件，作为备用方案
-            const functionCallPayload = payload as any;
-            console.log('[ToolCall] 收到事件:', eventName, functionCallPayload);
-
-            const fnName =
-              functionCallPayload?.function_name ||
-              functionCallPayload?.function?.name ||
-              functionCallPayload?.name;
-            const callId = functionCallPayload?.call_id;
-            let parsedArgs: any = undefined;
-            try {
-              parsedArgs = JSON.parse(functionCallPayload.arguments || '{}');
-            } catch (_e) {
-              // ignore
-            }
-
-            if (fnName === 'reminder') {
-              console.log('[Reminder] ✅ 识别到 reminder 工具调用 (function_call.done):', functionCallPayload);
-              try {
-                const args = JSON.parse(functionCallPayload.arguments || '{}');
-                console.log('[Reminder] ✅ 解析参数:', args);
-                const reminder = handleReminderCall(args);
-
-                // ✅ 本地工具执行完毕后回传 function_call_output（闭环）
-                if (typeof callId === 'string' && callId.length > 0) {
-                  const voiceChatCore = realTime.current?.getVoiceChatCore();
-                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
-                  connectionManager?.sendFunctionCallOutput?.(callId, {
-                    status: 1,
-                    reminderId: reminder?.id,
-                    content: reminder?.content,
-                    startAt: reminder?.startAt,
-                  });
-                } else {
-                  console.warn('[Reminder] call_id 为空，跳过 function_call_output 回传');
-                }
-              } catch (error) {
-                console.error('[Reminder] ❌ 参数解析失败:', error);
-              }
-            }
-
-            if (fnName === 'device_control') {
-              console.log('[DeviceControl] ✅ 识别到 device_control 工具调用(备用):', { callId, parsedArgs });
-              void handleDeviceControlCall(callId, parsedArgs);
-            }
-
-            // 处理拍照意图（备用）：function_call.done 有时不带 function_name，只能靠 call_id / arguments 兜底
-            const argsStr = parsedArgs ? JSON.stringify(parsedArgs) : (functionCallPayload.arguments || '');
-            const isVisualQaIntent = fnName === 'get_visual_QA';
-            if (isVisualQaIntent) {
-              const question = typeof parsedArgs?.question === 'string' && parsedArgs.question.trim().length > 0
-                ? parsedArgs.question.trim()
-                : '请描述我面前有什么';
-              console.log('[Vision] ✅ 识别到视觉问答工具调用(备用)，准备拍照并走 vision 管线:', { fnName, callId, question });
-              if (typeof callId === 'string' && callId.length > 0) {
-                if (!visualQaTriggeredCallIdsRef.current.has(callId)) {
-                  visualQaTriggeredCallIdsRef.current.add(callId);
-                  sendVisualQaStopOutput(callId, question);
-                  pendingVisualQaRef.current = { callId, question };
-                  void openCamera({ autoCapture: true });
-                }
-              } else {
-                pendingVisualQaRef.current = { callId: `visual_${Date.now()}`, question };
-                void openCamera({ autoCapture: true });
-                console.warn('[Vision] call_id 为空，仍会发送 ImageData，但无法关联原始工具调用');
-              }
-              console.log('[Vision] 摄像头打开请求已发出，将自动拍照并发送 ImageData 到 vision 管线');
-            }
-
-            const isTakePhotoIntent =
-              fnName === 'take_photo' ||
-              // 显式路由：服务端如果用 device_command 发拍照指令，也当作 take_photo
-              fnName === 'device_command' ||
-              (typeof callId === 'string' && callId.includes('take_photo')) ||
-              (
-                ((fnName && String(fnName).includes('device')) || (typeof callId === 'string' && callId.includes('device'))) &&
-                (argsStr.includes('take_photo') || argsStr.includes('拍照') || argsStr.includes('camera'))
-              );
-            if (isTakePhotoIntent) {
-              console.log('[Camera] ✅ 识别到拍照意图(备用)，准备打开摄像头:', { fnName, callId, parsedArgs });
-              void openCamera();
-              console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');
-
-              // ✅ take_photo：本地工具触发后回传 function_call_output（闭环，避免服务端等待超时）
-              if (typeof callId === 'string' && callId.length > 0) {
-                if (!takePhotoAckedCallIdsRef.current.has(callId)) {
-                  takePhotoAckedCallIdsRef.current.add(callId)
-                  const voiceChatCore = realTime.current?.getVoiceChatCore();
-                  const connectionManager = voiceChatCore?.getConnectionManager() as any;
-                  connectionManager?.sendFunctionCallOutput?.(callId, {
-                    status: 1,
-                    action: 'take_photo',
-                    result: 'camera_open_requested',
-                  });
-                }
-              } else {
-                console.warn('[Camera] call_id 为空，跳过 function_call_output 回传');
-              }
-            }
+            handleToolCallEventRef.current(eventName, payload);
             break;
           }
 
@@ -1498,8 +590,6 @@ export const App = () => {
       // 清理
       return () => {
         console.log(`[DEBUG] 清理事件监听器`);
-        audioManagerRef.current?.removeAllListeners?.();
-        stopAudioTransmission();
         voiceChatCore.off('audio_chunk', handleAudioDataReceived);
         handlers.forEach((h, name) => voiceChatCore.off(name, h));
 
@@ -1510,548 +600,63 @@ export const App = () => {
         }
 
         // 关闭摄像头
-        closeCamera();
+        closeCameraRef.current();
         console.log(`[DEBUG] 摄像头已关闭`);
       };
     }
     // 提供全局函数来添加日志
 
     return undefined;
-  }, []); // 只在组件挂载时执行一次
-
-  // 单独处理音频播放状态变化
-  useEffect(() => {
-    // 确保audioPlayer的状态正确初始化
-    if (isPlayingDownstreamAudio) {
-      if (!audioPlayerRef.current) {
-        audioPlayerRef.current = new AudioPlayer();
-        console.log('[AUDIO] AudioPlayer 初始化完成');
-      }
-    } else {
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.stopPlayback();
-        audioPlayerRef.current = null;
-        console.log('[AUDIO] AudioPlayer 已停止并清理');
-      }
-    }
-  }, [isPlayingDownstreamAudio]);
-
-  // 处理照片捕获事件
-  useEffect(() => {
-    const handlePhotoCaptured = async (event: Event) => {
-      const blob = (event as CustomEvent).detail as Blob;
-      if (!blob) {
-        console.error('[CAMERA] 捕获的照片为空');
-        return;
-      }
-
-      // 拍完照自动下载刚刚的图片（最佳努力：某些浏览器策略可能会拦截非用户手势下载）
-      try {
-        const ext = (() => {
-          switch (blob.type) {
-            case 'image/jpeg': return 'jpg';
-            case 'image/png': return 'png';
-            case 'image/webp': return 'webp';
-            default: return 'jpg';
-          }
-        })();
-        const filename = `photo-${Date.now()}.${ext}`;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } catch {
-        // ignore
-      }
-
-      console.log('[CAMERA] 收到捕获的照片，大小:', blob.size, '字节');
-      const pendingVisualQa = pendingVisualQaRef.current;
-      const prompt = pendingVisualQa?.question ?? '';
-      if (pendingVisualQa) {
-        console.log('[Vision] 使用视觉问答问题作为 ImageData prompt:', {
-          callId: pendingVisualQa.callId,
-          question: pendingVisualQa.question,
-        });
-      }
-
-      // 检查连接状态
-      const voiceChatCore = realTime.current?.getVoiceChatCore();
-      if (!voiceChatCore?.isConnected) {
-        console.error('[CAMERA] WebSocket未连接');
-        alert('WebSocket未连接，无法发送照片');
-        return;
-      }
-
-      if (!voiceChatCore?.isSessionCreated) {
-        console.error('[CAMERA] 会话未创建');
-        alert('会话未创建，无法发送照片');
-        return;
-      }
-
-      console.log('[CAMERA] 连接状态正常，开始发送照片...');
-
-      try {
-        // 将 Blob 转换为 Uint8Array
-        const arrayBuffer = await blob.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
-
-        console.log('[CAMERA] 照片数据准备完成，大小:', uint8Array.length, '字节');
-
-        // 发送照片数据（使用协议ID 100 - All）。get_visual_QA 触发时把问题作为 prompt 交给 BE vision_tts。
-        const result = realTime.current?.sendImageData(uint8Array, prompt, ProtocolId.All);
-
-        if (result) {
-          console.log('[CAMERA] ✅ 照片发送成功，大小:', blob.size, '字节');
-          if (pendingVisualQa) {
-            console.log('[Vision] ✅ get_visual_QA 已转为 ImageData，等待 vision 管线返回文本/语音');
-          }
-          console.log('[CAMERA] 📡 等待服务端响应...');
-          // alert('照片已成功发送，请等待AI分析结果');
-        } else {
-          console.error('[CAMERA] ❌ 照片发送失败');
-          alert('照片发送失败，请检查连接状态');
-        }
-      } catch (error) {
-        console.error('[CAMERA] ❌ 照片处理失败:', error);
-        alert(`照片处理失败: ${error instanceof Error ? error.message : '未知错误'}`);
-      } finally {
-        if (pendingVisualQa) {
-          pendingVisualQaRef.current = null;
-        }
-      }
-    };
-
-    window.addEventListener('photoCaptured', handlePhotoCaptured);
-
-    return () => {
-      window.removeEventListener('photoCaptured', handlePhotoCaptured);
-    };
-  }, []);
-
-  // 获取延迟颜色类名的函数 - 使用 useMemo 优化
-  const getLatencyColor = useMemo(() =>
-    (latency: number): string => {
-      if (latency === 0) return '';
-      if (latency < 1000) return styles.excellent;
-      if (latency < 2000) return styles.good;
-      return styles.poor;
-    }, []);
-
-  const [isWsConnected, setIsWsConnected] = useAtom(wsConnectedAtom);
-  const [isSessionCreated, setIsSessionCreated] = useAtom(sessionCreatedAtom);
-
-  // 更新会话状态
-  const updateSessionStatus = useCallback(() => {
-    const voiceChatCore = realTime.current?.getVoiceChatCore();
-    if (voiceChatCore) {
-      const newStatus = {
-        connected: voiceChatCore.isConnected,
-        sessionCreated: voiceChatCore.isSessionCreated
-      };
-      // console.log('[DEBUG] 会话状态更新:', newStatus);
-      setSessionStatus(newStatus);
-      setIsSessionCreated(voiceChatCore.isSessionCreated);
-      setCurrentSessionId(voiceChatCore.currentSessionId ?? '');
-    } else {
-      console.log('[DEBUG] VoiceChatCore 实例不可用');
-    }
-  }, [setIsSessionCreated]);
-
-  const applySessionId = useCallback(() => {
-    const trimmed = sessionIdInput.trim();
-    if (!trimmed) return;
-
-    const voiceChatCore = realTime.current?.getVoiceChatCore();
-    if (!voiceChatCore?.isConnected) {
-      alert('WebSocket未连接，无法切换sessionId');
-      return;
-    }
-
-    console.log('[SESSION] switch', { from: voiceChatCore.currentSessionId, to: trimmed });
-    resetPerformanceMonitor('session_switch');
-    voiceChatCore.getConnectionManager().recreateSession(trimmed);
-    setSessionIdInput('');
-  }, [resetPerformanceMonitor, sessionIdInput]);
-
-  const applyVoicePreset = useCallback((nextPreset: VoicePreset) => {
-    setVoicePreset(nextPreset);
-    try {
-      localStorage.setItem(VOICE_PRESET_STORAGE_KEY, nextPreset);
-      // 兼容旧 key：保持同步，避免其它地方还在读
-      localStorage.setItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY, nextPreset === 'soft' ? '1' : '0');
-    } catch { /* ignore */ }
-
-    const voice_setting = nextPreset === 'soft'
-      ? { voice_id: CUSTOM_VOICE_ID, speed: 1.0, pitch: 0, vol: 1.0 }
-      : undefined; // 默认：不发 voice_setting，让服务端走默认音色
-
-    // 1) 更新默认 config（下次连接也会带上/不带 voice_setting）
-    realTime.current?.setSessionConfig?.({ voice_setting });
-
-    // 2) 已连接：强制新 sessionId 立即生效
-    const voiceChatCore = realTime.current?.getVoiceChatCore?.();
-    if (voiceChatCore?.isConnected) {
-      voiceChatCore.startNewSession?.({ voice_setting });
-    }
-  }, []);
-
-  useEffect(() => {
-    const voiceChatCore: VoiceChatCore = realTime.current?.getVoiceChatCore();
-
-    // 监听WebSocket原生事件
-    const handleOpen = () => {
-      // 连接成功时，connectionStatusChange事件应该已经更新了状态
-      setIsWsConnected(true);
-      updateSessionStatus();
-    };
-
-    const handleClose = () => {
-      setIsWsConnected(false);
-      updateSessionStatus();
-    };
-
-    const handleError = () => {
-      updateSessionStatus();
-    };
-
-    // 监听会话创建事件
-    const handleSessionCreated = () => {
-      updateSessionStatus();
-    };
-
-    // 注册事件监听器
-    // voiceChatCore.on('connectionStatusChange', handleConnectionStatusChange);
-    voiceChatCore.on('open', handleOpen);
-    voiceChatCore.on('close', handleClose);
-    voiceChatCore.on('error', handleError);
-    voiceChatCore.on('session.created', handleSessionCreated);
-
-    // 清理函数
-    return () => {
-      // voiceChatCore.off('connectionStatusChange', handleConnectionStatusChange);
-      voiceChatCore.off('open', handleOpen);
-      voiceChatCore.off('close', handleClose);
-      voiceChatCore.off('error', handleError);
-      voiceChatCore.off('session.created', handleSessionCreated);
-    };
-  }, [realTime, setIsWsConnected, updateSessionStatus]);
-
-  // 定期更新会话状态
-  useEffect(() => {
-    const interval = setInterval(updateSessionStatus, 1000); // 每秒更新一次
-    return () => clearInterval(interval);
-  }, [updateSessionStatus]);
+  }, [audioPlayerRef, isPlayingDownstreamAudioRef]); // 只在组件挂载时执行一次；这两个 ref 来自稳定 hook 返回值
 
   return (
     <div className={styles.container}>
       <div className={styles.mainSection}>
-        {/* 实时响应速度监控显示 */}
-        <div className={`${styles.performanceMonitor} ${isPerformanceMonitorVisible ? styles.visible : styles.hidden}`}>
-          <div className={styles.performanceHeader}>
-            <h4>实时响应监控</h4>
-            <div className={styles.headerButtons}>
-              <button
-                className={`${styles.toggleButton} ${isPerformanceMonitorEnabled ? styles.enabled : styles.disabled}`}
-                onClick={togglePerformanceMonitor}
-                title={isPerformanceMonitorEnabled ? "关闭性能监控" : "开启性能监控"}
-                type="button"
-              >
-                {isPerformanceMonitorEnabled ? "⏸" : "▶"}
-              </button>
-              <button
-                className={styles.toggleButton}
-                onClick={togglePerformanceVisibility}
-                title="展开/收起"
-                type="button"
-              >
-                {isPerformanceMonitorVisible ? '−' : '+'}
-              </button>
-            </div>
-          </div>
-
-          {isPerformanceMonitorVisible && (
-            <div className={styles.performanceContent}>
-              <div className={styles.metricsGrid}>
-                <div className={styles.metric}>
-                  <span className={styles.metricLabel}>平均音频延迟</span>
-                  <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.averageAudioLatency)}`}>
-                    {responseMetrics.averageAudioLatency > 0
-                      ? `${responseMetrics.averageAudioLatency.toFixed(0)}ms`
-                      : '--'}
-                  </span>
-                </div>
-
-                <div className={styles.metric}>
-                  <span className={styles.metricLabel}>最近音频延迟</span>
-                  <span className={`${styles.metricValue} ${getLatencyColor(responseMetrics.lastAudioLatency)}`}>
-                    {responseMetrics.lastAudioLatency > 0
-                      ? `${responseMetrics.lastAudioLatency.toFixed(0)}ms`
-                      : '--'}
-                  </span>
-                </div>
-                <div className={styles.metric}>
-                  <span className={styles.metricLabel}>对话轮次</span>
-                  <span className={styles.metricValue}>
-                    {responseMetrics.totalInteractions}
-                  </span>
-                </div>
-
-                <div className={styles.metric}>
-                  <span className={styles.metricLabel}>计时精度</span>
-                  <span className={`${styles.metricValue} ${responseMetrics.isTimingActive ? styles.timing : styles.excellent}`}>
-                    {responseMetrics.isTimingActive ? '高精度计时中...' : '1ms精度'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 响应时间趋势图 */}
-              {responseMetrics.audioResponseTimes.length > 1 && (
-                <TrendChart responseMetrics={responseMetrics} />
-              )}
-            </div>
-          )}
-        </div>
-        <div className={styles.squadyUIContainer}>
-          <LiveAudioVisualizerComponent pause={!isUserSpeaking} />
-          <div
-            className={styles.squadyUI}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              record();
-            }}
-          >
-            <img src={squadyLogo} alt="squady" />
-          </div>
-          <div className={styles.squadyUIText}>
-            <div>Squady</div>
-            <StatusPoint />
-          </div>
-          <div className={styles.squadySubtext}>
-            {talkHint || (isUserSpeaking ? '正在聆听...' : '点击开始对话')}
-          </div>
-        </div>
-
-        <div className={styles.wsConfigBar}>
-          <div className={styles.wsConfigRow}>
-            <span className={styles.wsConfigLabel}>WS</span>
-            <select
-              value={wsPresetId}
-              onChange={async (e) => {
-                const id = e.target.value as WsPresetId;
-                setWsPresetId(id);
-                const preset = wsPresets.find(p => p.id === id);
-                if (preset && preset.id !== 'custom') {
-                  await applyWebSocketUrl(preset.url, id);
-                }
-              }}
-              disabled={isSwitchingWs}
-              className={styles.wsConfigSelect}
-            >
-              {wsPresets.map(p => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-
-            {wsPresetId === 'custom' && (
-              <input
-                value={wsInput}
-                onChange={(e) => setWsInput(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key === 'Enter') {
-                    await applyWebSocketUrl(wsInput, 'custom');
-                  }
-                }}
-                placeholder="ws://host:port/path"
-                disabled={isSwitchingWs}
-                className={styles.wsConfigInput}
-              />
-            )}
-
-            {wsPresetId === 'custom' && (
-              <button
-                type="button"
-                onClick={async () => applyWebSocketUrl(wsInput, 'custom')}
-                disabled={isSwitchingWs}
-                className={styles.wsConfigButton}
-              >
-                Apply
-              </button>
-            )}
-          </div>
-          <div className={styles.wsConfigHint} title={wsUrl}>
-            当前: {wsUrl}
-          </div>
-
-          <div className={styles.wsConfigHint} title={currentSessionId || undefined}>
-            Session: {currentSessionId || '--'}
-          </div>
-
-          <div className={styles.wsConfigRow}>
-            <span className={styles.wsConfigLabel}>Session</span>
-            <input
-              value={sessionIdInput}
-              onChange={(e) => setSessionIdInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') applySessionId();
-              }}
-              placeholder="输入 sessionId（如16位）"
-              className={styles.wsConfigInput}
-              disabled={isSwitchingWs}
-            />
-            <button
-              type="button"
-              onClick={applySessionId}
-              disabled={isSwitchingWs}
-              className={styles.wsConfigButton}
-            >
-              Apply
-            </button>
-          </div>
-
-          <div className={styles.wsConfigRow}>
-            <span className={styles.wsConfigLabel}>Voice</span>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={voicePreset === 'default'}
-                disabled={isSwitchingWs}
-                onChange={(e) => { if (e.target.checked) applyVoicePreset('default'); }}
-              />
-              默认
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={voicePreset === 'soft'}
-                disabled={isSwitchingWs}
-                onChange={(e) => { if (e.target.checked) applyVoicePreset('soft'); }}
-              />
-              轻柔音色
-            </label>
-          </div>
-        </div>
-
-
-
+        <PerformanceMonitor
+          enabled={isPerformanceMonitorEnabled}
+          visible={isPerformanceMonitorVisible}
+          metrics={responseMetrics}
+          onToggleEnabled={togglePerformanceMonitor}
+          onToggleVisible={togglePerformanceVisibility}
+        />
+        <VoiceStage
+          isUserSpeaking={isUserSpeaking}
+          talkHint={talkHint}
+          onRecord={record}
+        />
+        <WebSocketSessionControls
+          currentSessionId={currentSessionId}
+          isSwitchingWs={isSwitchingWs}
+          sessionIdInput={sessionIdInput}
+          voicePreset={voicePreset}
+          wsInput={wsInput}
+          wsPresetId={wsPresetId}
+          wsPresets={WS_PRESETS}
+          wsUrl={wsUrl}
+          onApplySessionId={applySessionId}
+          onApplyVoicePreset={applyVoicePreset}
+          onApplyWebSocketUrl={applyWebSocketUrl}
+          onSessionIdInputChange={setSessionIdInput}
+          onWsInputChange={setWsInput}
+          onWsPresetChange={setWsPresetId}
+        />
       </div>
 
-      <div className={styles.secondary}>
-        {/* 图像上传区域 */}
-        <div className={styles.imageUploadSection}>
-          {/* 切换按钮 */}
-          <button
-            onClick={toggleSecondarySections}
-            className={styles.sectionToggle}
-            title={isImageUploadSectionExpanded ? "切换到响应显示" : "切换到图片上传"}
-          >
-            {isImageUploadSectionExpanded ? "✉️" : "📷"}
-
-          </button>
-
-          {/* 图片输入框内容 */}
-          <div className={`${styles.imageInputContent} ${isImageUploadSectionExpanded ? styles.expanded : styles.collapsed}`}>
-            {/* 图片输入框切换按钮 */}
-            {/* <button
-              onClick={toggleImageInputExpanded}
-              className={styles.imageInputToggle}
-              title={isImageInputExpanded ? "折叠图片输入" : "展开图片输入"}
-            >
-              {isImageInputExpanded ? "▲" : "▼"}
-            </button> */}
-
-            <input
-              id="imageInput"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={handleImageSelect}
-              style={{ display: 'none' }}
-              disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
-            />
-
-            {!selectedImage ? (
-              <div className={styles.imgLabelContainer}>
-                <label
-                  htmlFor="imageInput"
-                  className={`${styles.imageUploadButton} ${(!sessionStatus.connected || !sessionStatus.sessionCreated) ? styles.disabled : ''}`}
-                >
-                  📷 选择图片
-                </label>
-
-                {(!sessionStatus.connected || !sessionStatus.sessionCreated) && (
-                  <div className={styles.uploadTip}>
-                    请先进行语音对话以建立会话
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className={styles.imagePreviewContainer}>
-                {imagePreview && (
-                  <img
-                    src={imagePreview}
-                    alt="预览"
-                    className={styles.imagePreview}
-                  />
-                )}
-
-                {/* 提示词输入框 - 只在选择图片后显示 */}
-                <div className={styles.promptInputContainer}>
-                  <textarea
-                    placeholder="可选：输入额外的提示词或问题（留空则使用最后一轮对话内容）"
-                    value={imagePrompt}
-                    onChange={(e) => setImagePrompt(e.target.value)}
-                    className={styles.promptInput}
-                    rows={3}
-                    disabled={!sessionStatus.connected || !sessionStatus.sessionCreated}
-                  />
-                  <div className={styles.imageActions}>
-                    <span className={styles.imageInfo}>
-                      {selectedImage.name} ({(selectedImage.size / 1024 / 1024).toFixed(2)} MB)
-                    </span>
-
-                    <div className={styles.imageButtons}>
-                      <button
-                        onClick={handleSendImage}
-                        disabled={isImageUploading}
-                        className={styles.sendButton}
-                      >
-                        {isImageUploading ? '发送中...' : '发送图片'}
-                      </button>
-                      <button
-                        onClick={handleCancelImage}
-                        className={styles.cancelButton}
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-
-              </div>
-            )}
-          </div>
-
-          {/* 服务器文本响应显示区域 */}
-          <div className={`${styles.responseTextDisplay} ${!isImageUploadSectionExpanded ? styles.expanded : styles.collapsed}`}>
-            <div className={styles.responseContentWrapper}>
-              <ReactMarkdown>
-                {currentText || finalTexts[0] || '服务器响应信息'}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 视觉功能测试面板 (开发调试用) */}
-      {/* <VisionTestPanel
-        realTime={realTime.current}
+      <ImageResponsePanel
+        currentText={currentText}
+        finalTexts={finalTexts}
+        imagePreview={imagePreview}
+        imagePrompt={imagePrompt}
+        isExpanded={isImageUploadSectionExpanded}
+        isImageUploading={isImageUploading}
+        selectedImage={selectedImage}
         sessionStatus={sessionStatus}
-      /> */}
+        onCancelImage={handleCancelImage}
+        onImagePromptChange={setImagePrompt}
+        onImageSelect={handleImageSelect}
+        onSendImage={handleSendImage}
+        onToggle={toggleSecondarySections}
+      />
 
       {/* PWA安装提示 */}
       <PWAInstallPrompt />

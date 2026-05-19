@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import styles from './App.module.scss'
 import { RealTime } from './RealTime'
-import type { AudioChunkPayload, ResponseAudioDeltaEvent, ResponseTextDeltaEvent, ResponseTextDoneEvent } from './sdk/protocol/ClientProtocol';
+import { ProtocolId, type AudioChunkPayload, type ResponseAudioDeltaEvent, type ResponseTextDeltaEvent, type ResponseTextDoneEvent } from './sdk/protocol/ClientProtocol';
 import { AudioPlayer } from './sdk/audio/AudioPlayer';
 import { base64ToUint8Array } from './sdk/audio/AudioUtils';
 
@@ -20,6 +20,7 @@ import { ImageResponsePanel } from './components/ImageResponsePanel';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { VoiceStage } from './components/VoiceStage';
 import { WebSocketSessionControls } from './components/WebSocketSessionControls';
+import { SimulMeetingTestPanel } from './components/SimulMeetingTestPanel';
 import {
   WS_PRESETS,
   createEmptyResponseMetrics,
@@ -39,6 +40,7 @@ const downstreamEvents = [
   'response.created',
   'response.text.delta',
   'response.text.done',
+  'response.text.speculative',
   'response.audio.delta',
   'response.audio.done',
   'response.output_item.added',
@@ -58,11 +60,20 @@ const downstreamEvents = [
   'response.function_call.delta',
   'response.function_call.done',
   'response.function_call_result.delta',
+  'response.language_detected',
+  'llm_summary',
   // 新的二进制音频事件
   'binary_audio_delta',
   'binary_audio_error'
 ] as const;
 
+type PipelineMode = 'dialogue' | 'interpret' | 'meeting';
+
+const PIPELINE_OPTIONS: Array<{ mode: PipelineMode; label: string }> = [
+  { mode: 'dialogue', label: '对话' },
+  { mode: 'interpret', label: '同传' },
+  { mode: 'meeting', label: '会议' },
+];
 
 export const App = () => {
   const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(false); // 默认展示响应显示
@@ -162,8 +173,10 @@ export const App = () => {
     applySessionId,
     applyVoicePreset,
     applyWebSocketUrl,
+    isSessionIdLocked,
     isSwitchingWs,
     sessionIdInput,
+    setSessionIdLock,
     setSessionIdInput,
     setWsInput,
     setWsPresetId,
@@ -200,6 +213,27 @@ export const App = () => {
   // 性能监控显示控制
   const [isPerformanceMonitorVisible, setIsPerformanceMonitorVisible] = useState(true);
   const { isUserSpeaking, record, talkHint } = useLocalVadUplink({ realTimeRef: realTime });
+  const [pipelineMode, setPipelineMode] = useState<PipelineMode>('dialogue');
+
+  const switchPipelineMode = useCallback((nextMode: PipelineMode) => {
+    if (nextMode === pipelineMode) return;
+
+    // Decision: dialogue, simultaneous interpretation, and meeting are mutually
+    // exclusive pipeline modes. Switching mode stops the previous server session
+    // instead of layering another pipeline on the same browser microphone/WS.
+    if (isUserSpeaking) {
+      void record();
+    }
+
+    const currentProtocol = pipelineMode === 'dialogue' ? ProtocolId.All : ProtocolId.Translation;
+    realTime.current?.stopSession(currentProtocol);
+    setCurrentText('');
+    setPipelineMode(nextMode);
+
+    if (nextMode === 'dialogue') {
+      realTime.current?.startNewSession(undefined, ProtocolId.All);
+    }
+  }, [isUserSpeaking, pipelineMode, record]);
 
   // 切换性能监控显示
   const togglePerformanceVisibility = useCallback(() => {
@@ -619,13 +653,16 @@ export const App = () => {
           onToggleEnabled={togglePerformanceMonitor}
           onToggleVisible={togglePerformanceVisibility}
         />
-        <VoiceStage
-          isUserSpeaking={isUserSpeaking}
-          talkHint={talkHint}
-          onRecord={record}
-        />
+        {pipelineMode === 'dialogue' && (
+          <VoiceStage
+            isUserSpeaking={isUserSpeaking}
+            talkHint={talkHint}
+            onRecord={record}
+          />
+        )}
         <WebSocketSessionControls
           currentSessionId={currentSessionId}
+          isSessionIdLocked={isSessionIdLocked}
           isSwitchingWs={isSwitchingWs}
           sessionIdInput={sessionIdInput}
           voicePreset={voicePreset}
@@ -636,27 +673,52 @@ export const App = () => {
           onApplySessionId={applySessionId}
           onApplyVoicePreset={applyVoicePreset}
           onApplyWebSocketUrl={applyWebSocketUrl}
+          onSessionIdLockChange={setSessionIdLock}
           onSessionIdInputChange={setSessionIdInput}
           onWsInputChange={setWsInput}
           onWsPresetChange={setWsPresetId}
         />
+        <div className={styles.pipelineModeBar} data-testid="pipeline-mode-bar">
+          {PIPELINE_OPTIONS.map(option => (
+            <button
+              key={option.mode}
+              type="button"
+              data-testid={`pipeline-mode-${option.mode}`}
+              className={`${styles.pipelineModeButton} ${pipelineMode === option.mode ? styles.pipelineModeButtonActive : ''}`}
+              onClick={() => switchPipelineMode(option.mode)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <ImageResponsePanel
-        currentText={currentText}
-        finalTexts={finalTexts}
-        imagePreview={imagePreview}
-        imagePrompt={imagePrompt}
-        isExpanded={isImageUploadSectionExpanded}
-        isImageUploading={isImageUploading}
-        selectedImage={selectedImage}
-        sessionStatus={sessionStatus}
-        onCancelImage={handleCancelImage}
-        onImagePromptChange={setImagePrompt}
-        onImageSelect={handleImageSelect}
-        onSendImage={handleSendImage}
-        onToggle={toggleSecondarySections}
-      />
+      {pipelineMode === 'dialogue' ? (
+        <ImageResponsePanel
+          currentText={currentText}
+          finalTexts={finalTexts}
+          imagePreview={imagePreview}
+          imagePrompt={imagePrompt}
+          isExpanded={isImageUploadSectionExpanded}
+          isImageUploading={isImageUploading}
+          selectedImage={selectedImage}
+          sessionStatus={sessionStatus}
+          onCancelImage={handleCancelImage}
+          onImagePromptChange={setImagePrompt}
+          onImageSelect={handleImageSelect}
+          onSendImage={handleSendImage}
+          onToggle={toggleSecondarySections}
+        />
+      ) : (
+        <SimulMeetingTestPanel
+          key={pipelineMode}
+          isUserSpeaking={isUserSpeaking}
+          profile={pipelineMode}
+          realTimeRef={realTime}
+          sessionStatus={sessionStatus}
+          onRecord={record}
+        />
+      )}
 
       {/* PWA安装提示 */}
       <PWAInstallPrompt />

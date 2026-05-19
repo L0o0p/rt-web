@@ -8,9 +8,9 @@ export class VoiceChatCore extends EventEmitter {
   private connectionManager: CombinedConnectionManager;
   private isDestroyed: boolean = false;
 
-  constructor(defaultSessionConfig?: Partial<SessionConfigPayload>) {
+  constructor(defaultSessionConfig?: Partial<SessionConfigPayload>, lockedSessionId?: string) {
     super();
-    this.connectionManager = new CombinedConnectionManager(undefined, defaultSessionConfig);
+    this.connectionManager = new CombinedConnectionManager(undefined, defaultSessionConfig, undefined, lockedSessionId);
 
     // 绑定消息处理器的回调
     this.setupMessageHandlerCallbacks();
@@ -168,16 +168,32 @@ export class VoiceChatCore extends EventEmitter {
     return this.connectionManager.currentSessionId || null;
   }
 
+  public get isSessionIdLocked(): boolean {
+    return this.connectionManager.isSessionIdLocked;
+  }
+
+  public get lockedSessionId(): string | null {
+    return this.connectionManager.currentLockedSessionId || null;
+  }
+
+  public lockSessionId(sessionId?: string): string {
+    return this.connectionManager.lockSessionId(sessionId);
+  }
+
+  public unlockSessionId(): void {
+    this.connectionManager.unlockSessionId();
+  }
+
   /**
    * 设置会话配置
    */
-  public setSessionConfig(config: Partial<SessionConfigPayload>): void {
+  public setSessionConfig(config: Partial<SessionConfigPayload>, protocolId: ProtocolId = ProtocolId.All): void {
     // 更新 CombinedConnectionManager 的默认配置
     this.connectionManager.setDefaultSessionConfig(config);
 
     // 如果已经连接，重新创建会话并传递配置
     if (this.isConnected) {
-      this.connectionManager.recreateSession(undefined, config);
+      this.connectionManager.recreateSession(undefined, config, protocolId);
     }
     // 如果尚未连接，配置将在下次连接时自动使用
   }
@@ -185,24 +201,31 @@ export class VoiceChatCore extends EventEmitter {
   /**
    * 开始新会话
    */
-  public startSession(config?: Partial<SessionConfigPayload>): void {
+  public startSession(config?: Partial<SessionConfigPayload>, protocolId: ProtocolId = ProtocolId.All): void {
     if (this.isDestroyed) {
       throw new Error('VoiceChatCore instance has been destroyed');
     }
 
     // 复用当前 sessionId 重新发 session_config（不会强制新 sessionId）
-    this.connectionManager.recreateSession(undefined, config);
+    this.connectionManager.recreateSession(undefined, config, protocolId);
   }
 
   /**
    * 开始全新会话（生成新 sessionId）
    * 某些服务端在 StopInput 后不允许继续输入时可用，但默认不要用。
    */
-  public startNewSession(config?: Partial<SessionConfigPayload>): void {
+  public startNewSession(config?: Partial<SessionConfigPayload>, protocolId: ProtocolId = ProtocolId.All): void {
     if (this.isDestroyed) {
       throw new Error('VoiceChatCore instance has been destroyed');
     }
-    this.connectionManager.startNewSession(config);
+    this.connectionManager.startNewSession(config, protocolId);
+  }
+
+  public stopSession(protocolId: ProtocolId = ProtocolId.All): void {
+    if (this.isDestroyed) {
+      return;
+    }
+    this.connectionManager.stopSession(protocolId);
   }
 
   /**

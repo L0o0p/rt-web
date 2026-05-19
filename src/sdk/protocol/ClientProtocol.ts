@@ -38,6 +38,7 @@ export const ProtocolId = {
     Asr: 1,
     Llm: 2,
     Tts: 3,
+    Translation: 4,
     Control: 4,
     All: 100,
 } as const;
@@ -101,6 +102,7 @@ export type MessagePayload =
     | ResponseFunctionCallDeltaEvent
     | ResponseFunctionCallDoneEvent
     | ResponseFunctionCallResultDeltaEvent
+    | LlmSummaryEvent
     | UnknownPayload;
 
 // 客户端发送的消息载荷类型定义
@@ -160,6 +162,12 @@ export interface SessionConfigPayload {
     input_audio_config?: AudioConfig;
     text_done_signal_only?: boolean;
     signal_only?: boolean;
+    from_language?: string;
+    to_language?: string;
+    enable_tts?: boolean;
+    enable_summary?: boolean;
+    asr_chinese_convert?: "none" | "t2s" | "s2t" | string;
+    tts_chinese_convert?: "none" | "t2s" | "s2t" | string;
 }
 
 export interface ConversationItemCreatePayload {
@@ -208,6 +216,7 @@ export interface AsrTranscriptionDeltaEvent {
     item_id: string;
     content_index: number;
     delta: string;
+    response_id?: string;
 }
 
 export interface AsrTranscriptionCompletedEvent {
@@ -216,6 +225,7 @@ export interface AsrTranscriptionCompletedEvent {
     item_id: string;
     content_index: number;
     transcript: string;
+    response_id?: string;
 }
 
 export interface ResponseCreatedEvent {
@@ -394,6 +404,12 @@ export interface ResponseFunctionCallResultDeltaEvent {
     delta: string;
 }
 
+export interface LlmSummaryEvent {
+    type: "llm_summary";
+    event_id: string;
+    summary: string;
+}
+
 export interface UnknownPayload {
     type: string;
     [key: string]: unknown;
@@ -450,6 +466,9 @@ export class BinaryHeader {
                 break;
             case 3:
                 protocolId = ProtocolId.Tts;
+                break;
+            case 4:
+                protocolId = ProtocolId.Translation;
                 break;
             case 100:
                 protocolId = ProtocolId.All;

@@ -8,9 +8,27 @@ import { DEFAULT_WEBSOCKET_URL } from '../sdk/types/protocol';
 
 export const VOICE_PRESET_STORAGE_KEY = 'voice_preset';
 export const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
+export const DEFAULT_VOICE_ID = 'zh_female_wanwanxiaohe_moon_bigtts';
 export const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
+export const LOCKED_SESSION_ID_STORAGE_KEY = 'locked_session_id';
 
 export type VoicePreset = 'default' | 'soft';
+
+export interface VoiceSettingPayload extends Record<string, unknown> {
+  voice_id: string;
+  speed: number;
+  pitch: number;
+  vol: number;
+}
+
+export const voiceSettingForPreset = (preset: VoicePreset): VoiceSettingPayload => ({
+  // Decision: default preset is an explicit session voice_setting. Omitting
+  // voice_setting means "do not change voice" for same-session hot updates.
+  voice_id: preset === 'soft' ? CUSTOM_VOICE_ID : DEFAULT_VOICE_ID,
+  speed: 1.0,
+  pitch: 0,
+  vol: 1.0,
+});
 
 export const WS_PRESETS = [
   { id: 'default', label: 'Default', url: DEFAULT_WEBSOCKET_URL },

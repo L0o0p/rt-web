@@ -1,11 +1,13 @@
 import { AudioManager } from './sdk/audio/AudioManager';
 import { VoiceChatCore } from './sdk/core/VoiceChatCore';
-import type { ProtocolId, SessionConfigPayload } from './sdk/protocol/ClientProtocol';
+import { BINARY_MESSAGE, type ProtocolId, type SessionConfigPayload } from './sdk/protocol/ClientProtocol';
 import { float32ToPcm16 } from './sdk/audio/AudioUtils';
 import {
-    CUSTOM_VOICE_ID,
     LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY,
+    LOCKED_SESSION_ID_STORAGE_KEY,
     VOICE_PRESET_STORAGE_KEY,
+    type VoicePreset,
+    voiceSettingForPreset,
 } from './app/architectureDecisions';
 
 export class RealTime {
@@ -15,17 +17,26 @@ export class RealTime {
     private nextSendAt: number | null = null;
 
     constructor() {
-        // 音色：默认（不发 voice_setting） vs 指定 voice_id（由 checkbox 控制）
-        const useCustomVoice = (() => {
+        const voicePreset: VoicePreset = (() => {
             try {
                 const preset = localStorage.getItem(VOICE_PRESET_STORAGE_KEY);
-                if (preset === 'soft') return true;
-                if (preset === 'default') return false;
+                if (preset === 'soft' || preset === 'default') return preset;
                 const legacy = localStorage.getItem(LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY);
-                return legacy === '1' || legacy === 'true';
+                return (legacy === '1' || legacy === 'true') ? 'soft' : 'default';
             } catch {
-                return false;
+                return 'default';
             }
+        })();
+        const lockedSessionId = (() => {
+            try {
+                const stored = localStorage.getItem(LOCKED_SESSION_ID_STORAGE_KEY)?.trim();
+                if (!stored) return undefined;
+                if (stored.length === BINARY_MESSAGE.NANOID_SIZE) return stored;
+                localStorage.removeItem(LOCKED_SESSION_ID_STORAGE_KEY);
+            } catch {
+                // ignore
+            }
+            return undefined;
         })();
 
         const defaultConfig: Partial<SessionConfigPayload> = {
@@ -33,17 +44,9 @@ export class RealTime {
             mode: 'vad',
             timezone: 'Asia/Shanghai',
             location: '中国',
-            ...(useCustomVoice ? {
-                voice_setting: {
-                    // voice_setting 结构与 iOS/Flutter 对齐：{ voice_id, speed, pitch, vol }
-                    voice_id: CUSTOM_VOICE_ID,
-                    speed: 1.0,
-                    pitch: 0,
-                    vol: 1.0
-                }
-            } : {})
+            voice_setting: voiceSettingForPreset(voicePreset)
         };
-        this.voiceChatCore = new VoiceChatCore(defaultConfig);
+        this.voiceChatCore = new VoiceChatCore(defaultConfig, lockedSessionId);
     }
 
     getVoiceChatCore(): VoiceChatCore {
@@ -54,12 +57,28 @@ export class RealTime {
         return this.audioManager;
     }
 
-    setSessionConfig(config: Partial<SessionConfigPayload>): void {
-        this.voiceChatCore.setSessionConfig(config);
+    setSessionConfig(config: Partial<SessionConfigPayload>, protocolId?: ProtocolId): void {
+        this.voiceChatCore.setSessionConfig(config, protocolId);
     }
 
-    startSession(config?: Partial<SessionConfigPayload>): void {
-        this.voiceChatCore.startSession(config);
+    startSession(config?: Partial<SessionConfigPayload>, protocolId?: ProtocolId): void {
+        this.voiceChatCore.startSession(config, protocolId);
+    }
+
+    startNewSession(config?: Partial<SessionConfigPayload>, protocolId?: ProtocolId): void {
+        this.voiceChatCore.startNewSession(config, protocolId);
+    }
+
+    lockSessionId(sessionId?: string): string {
+        return this.voiceChatCore.lockSessionId(sessionId);
+    }
+
+    unlockSessionId(): void {
+        this.voiceChatCore.unlockSessionId();
+    }
+
+    stopSession(protocolId?: ProtocolId): void {
+        this.voiceChatCore.stopSession(protocolId);
     }
 
     connectToServer = async () => {

@@ -1,6 +1,6 @@
 import { CONFIG, getWebSocketUrl } from '../types/protocol';
 import { globalLogger as logger } from '../utils/GlobalLogger';
-import { CommandId, ProtocolId, ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
+import { BINARY_MESSAGE, CommandId, ProtocolId, ClientBinaryMessage as BinaryMessage } from '../protocol/ClientProtocol';
 import type { WebSocketMessage, SessionConfigPayload, ConversationItemCreatePayload } from '../protocol/ClientProtocol';
 import {
   WebSocketMessageParser,
@@ -184,8 +184,10 @@ export class CombinedConnectionManager extends EventEmitter {
 
   // 会话相关属性
   private sessionId: string | undefined = undefined;
+  private lockedSessionId: string | undefined = undefined;
   private sessionCreated: boolean = false; // 服务端确认的会话创建状态（由 session.created 驱动）
   private defaultSessionConfig?: Partial<SessionConfigPayload>;
+  private sessionProtocolId: ProtocolId = ProtocolId.All;
 
   // 消息解析器
   private webSocketParser: WebSocketMessageParser;
@@ -208,19 +210,15 @@ export class CombinedConnectionManager extends EventEmitter {
   constructor(
     sessionId?: string,
     defaultSessionConfig?: Partial<SessionConfigPayload>,
-    binaryAudioConfig?: Partial<BinaryAudioProtocolConfig>
+    binaryAudioConfig?: Partial<BinaryAudioProtocolConfig>,
+    lockedSessionId?: string
   ) {
     super();
     this.webSocketParser = new WebSocketMessageParser();
     this.binaryParser = new BinaryMessageParser(binaryAudioConfig);
     this.defaultSessionConfig = defaultSessionConfig;
-    if (sessionId) {
-      this.sessionId = sessionId;
-    }
-    else {
-      // 16字的随机字符串
-      this.sessionId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-    }
+    this.lockedSessionId = lockedSessionId ? this.requireValidSessionId(lockedSessionId, 'locked sessionId') : undefined;
+    this.sessionId = this.lockedSessionId ?? sessionId ?? this.generateSessionId();
   }
 
   /**
@@ -273,10 +271,10 @@ export class CombinedConnectionManager extends EventEmitter {
   /**
    * 发送文本消息
    */
-  sendTextMessage(message: WebSocketMessage['payload'], commandID: CommandId): void {
+  sendTextMessage(message: WebSocketMessage['payload'], commandID: CommandId, protocolId: ProtocolId = this.sessionProtocolId): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
       const fullMessage = {
-        protocol_id: ProtocolId.All,
+        protocol_id: protocolId,
         command_id: commandID,
         session_id: this.sessionId!,
         payload: message
@@ -338,8 +336,12 @@ export class CombinedConnectionManager extends EventEmitter {
           item_id: itemId || ''
         };
 
+        const stopInputProtocolId = this.sessionProtocolId === ProtocolId.Translation
+          ? ProtocolId.Translation
+          : ProtocolId.Asr;
+
         const fullMessage = {
-          protocol_id: ProtocolId.Asr,
+          protocol_id: stopInputProtocolId,
           command_id: CommandId.StopInput,
           session_id: this.sessionId,
           payload: stopInputPayload
@@ -423,7 +425,9 @@ export class CombinedConnectionManager extends EventEmitter {
     this.connectionAttempts = 0;
     // 如果没有提供 sessionID，则生成一个新的
     if (!this.sessionId) {
-      this.sessionId = this.generateSessionId();
+      this.sessionId = this.nextSessionId();
+    } else if (this.lockedSessionId && this.sessionId !== this.lockedSessionId) {
+      this.sessionId = this.lockedSessionId;
     }
     this.sessionCreated = false;
     this.createSession();
@@ -445,17 +449,53 @@ export class CombinedConnectionManager extends EventEmitter {
     const combined = timestamp + random;
     return combined.substr(0, 16).padEnd(16, '0');
   }
+
+  private requireValidSessionId(sessionId: string, source: string): string {
+    const trimmed = sessionId.trim();
+    if (trimmed.length !== BINARY_MESSAGE.NANOID_SIZE) {
+      throw new Error(`${source} 必须为 ${BINARY_MESSAGE.NANOID_SIZE} 字符`);
+    }
+    return trimmed;
+  }
+
+  private nextSessionId(): string {
+    return this.lockedSessionId ?? this.generateSessionId();
+  }
+
+  public lockSessionId(sessionId?: string): string {
+    const nextSessionId = this.requireValidSessionId(sessionId ?? this.sessionId ?? this.generateSessionId(), '锁定 sessionId');
+    // Decision: when locked, sessionId becomes a client-side invariant. All later
+    // create/recreate/startNewSession paths must reuse this id until explicit unlock.
+    this.lockedSessionId = nextSessionId;
+    this.sessionId = nextSessionId;
+    logger.info(`[SESSION] sessionId locked: ${nextSessionId}`);
+    return nextSessionId;
+  }
+
+  public unlockSessionId(): void {
+    logger.info(`[SESSION] sessionId unlocked: ${this.lockedSessionId ?? '(none)'}`);
+    this.lockedSessionId = undefined;
+  }
   /**
    * 重新创建会话
    */
-  recreateSession(sessionId?: string, config?: Partial<SessionConfigPayload>): void {
+  recreateSession(sessionId?: string, config?: Partial<SessionConfigPayload>, protocolId: ProtocolId = this.sessionProtocolId): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.sessionProtocolId = protocolId;
       // 使用提供的 sessionID 或者保持现有的 sessionID
       if (sessionId) {
-        this.sessionId = sessionId;
+        const nextSessionId = this.requireValidSessionId(sessionId, 'sessionId');
+        if (this.lockedSessionId && nextSessionId !== this.lockedSessionId) {
+          logger.warn(`[SESSION] sessionId 已锁定为 ${this.lockedSessionId}，忽略切换到 ${nextSessionId}`);
+        } else {
+          this.sessionId = nextSessionId;
+        }
+      }
+      if (this.lockedSessionId) {
+        this.sessionId = this.lockedSessionId;
       }
       // 创建会话
-      this.createSession(config);
+      this.createSession(config, protocolId);
     }
   }
 
@@ -463,16 +503,28 @@ export class CombinedConnectionManager extends EventEmitter {
    * 开始一个全新的会话（生成新的 sessionId）
    * 用于 StopInput 之后重新开始对话，避免复用旧 sessionId 导致服务端不再接受输入
    */
-  startNewSession(config?: Partial<SessionConfigPayload>): void {
+  startNewSession(config?: Partial<SessionConfigPayload>, protocolId: ProtocolId = this.sessionProtocolId): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-      this.sessionId = this.generateSessionId();
+      this.sessionProtocolId = protocolId;
+      this.sessionId = this.nextSessionId();
       this.sessionCreated = false;
-      this.createSession(config);
+      this.createSession(config, protocolId);
     }
   }
 
-  private createSession(config?: Partial<SessionConfigPayload>): void {
+  stopSession(protocolId: ProtocolId = this.sessionProtocolId): void {
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN || !this.sessionId) {
+      logger.error('[CLIENT] WebSocket未连接，无法停止session');
+      return;
+    }
+
+    this.sendTextMessage(undefined, CommandId.Stop, protocolId);
+    this.sessionCreated = false;
+  }
+
+  private createSession(config?: Partial<SessionConfigPayload>, protocolId: ProtocolId = this.sessionProtocolId): void {
     if (this.websocket && this.websocket.readyState === WebSocket.OPEN && this.sessionId) {
+      this.sessionProtocolId = protocolId;
       const sessionConfigPayload: SessionConfigPayload = {
         type: "session_config",
         mode: "vad",
@@ -687,7 +739,7 @@ export class CombinedConnectionManager extends EventEmitter {
       logger.info(`[CLIENT] defaultSessionConfig:`, JSON.stringify(this.defaultSessionConfig, null, 2));
       logger.info(`[CLIENT] config parameter:`, JSON.stringify(config, null, 2));
 
-      this.sendTextMessage(sessionConfigPayload, CommandId.Start);
+      this.sendTextMessage(sessionConfigPayload, CommandId.Start, protocolId);
     }
   }
 
@@ -710,6 +762,14 @@ export class CombinedConnectionManager extends EventEmitter {
 
   get currentSessionId(): string | undefined {
     return this.sessionId;
+  }
+
+  get isSessionIdLocked(): boolean {
+    return Boolean(this.lockedSessionId);
+  }
+
+  get currentLockedSessionId(): string | undefined {
+    return this.lockedSessionId;
   }
 
   get isSessionCreated(): boolean {

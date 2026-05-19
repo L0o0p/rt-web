@@ -3,6 +3,7 @@ import type { VoicePreset, WsPreset, WsPresetId } from '../app/architectureDecis
 
 interface WebSocketSessionControlsProps {
   currentSessionId: string;
+  isSessionIdLocked: boolean;
   isSwitchingWs: boolean;
   sessionIdInput: string;
   voicePreset: VoicePreset;
@@ -13,6 +14,7 @@ interface WebSocketSessionControlsProps {
   onApplySessionId: () => void;
   onApplyVoicePreset: (preset: VoicePreset) => void;
   onApplyWebSocketUrl: (url: string, presetId?: WsPresetId) => Promise<void>;
+  onSessionIdLockChange: (locked: boolean) => void;
   onSessionIdInputChange: (value: string) => void;
   onWsInputChange: (value: string) => void;
   onWsPresetChange: (presetId: WsPresetId) => void;
@@ -20,6 +22,7 @@ interface WebSocketSessionControlsProps {
 
 export const WebSocketSessionControls = ({
   currentSessionId,
+  isSessionIdLocked,
   isSwitchingWs,
   sessionIdInput,
   voicePreset,
@@ -30,6 +33,7 @@ export const WebSocketSessionControls = ({
   onApplySessionId,
   onApplyVoicePreset,
   onApplyWebSocketUrl,
+  onSessionIdLockChange,
   onSessionIdInputChange,
   onWsInputChange,
   onWsPresetChange,
@@ -86,7 +90,7 @@ export const WebSocketSessionControls = ({
     </div>
 
     <div className={styles.wsConfigHint} title={currentSessionId || undefined}>
-      Session: {currentSessionId || '--'}
+      Session: {currentSessionId || '--'}{isSessionIdLocked ? ' (locked)' : ''}
     </div>
 
     <div className={styles.wsConfigRow}>
@@ -109,6 +113,15 @@ export const WebSocketSessionControls = ({
       >
         Apply
       </button>
+      <label className={styles.wsConfigCheckbox}>
+        <input
+          type="checkbox"
+          checked={isSessionIdLocked}
+          disabled={isSwitchingWs}
+          onChange={(event) => onSessionIdLockChange(event.target.checked)}
+        />
+        Lock
+      </label>
     </div>
 
     <div className={styles.wsConfigRow}>

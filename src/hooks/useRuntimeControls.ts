@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import type { RealTime } from '../RealTime';
+import { BINARY_MESSAGE } from '../sdk/protocol/ClientProtocol';
 import { DEFAULT_WEBSOCKET_URL } from '../sdk/types/protocol';
 import { getRuntimeWebSocketUrl, setStoredWebSocketUrl } from '../sdk/config/runtimeConfig';
 import {
-  CUSTOM_VOICE_ID,
   LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY,
+  LOCKED_SESSION_ID_STORAGE_KEY,
   VOICE_PRESET_STORAGE_KEY,
   WS_PRESETS,
   type VoicePreset,
   type WsPresetId,
+  voiceSettingForPreset,
 } from '../app/architectureDecisions';
 
 interface UseRuntimeControlsOptions {
@@ -39,6 +41,26 @@ const getInitialWebSocketConfig = () => {
   };
 };
 
+const getInitialLockedSessionId = (): string | undefined => {
+  try {
+    const stored = localStorage.getItem(LOCKED_SESSION_ID_STORAGE_KEY)?.trim();
+    if (!stored) return undefined;
+    if (stored.length === BINARY_MESSAGE.NANOID_SIZE) return stored;
+    localStorage.removeItem(LOCKED_SESSION_ID_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  return undefined;
+};
+
+const persistLockedSessionId = (sessionId: string): void => {
+  try {
+    localStorage.setItem(LOCKED_SESSION_ID_STORAGE_KEY, sessionId);
+  } catch {
+    // Runtime lock still works for this page even if persistence is unavailable.
+  }
+};
+
 export const useRuntimeControls = ({
   realTimeRef,
   resetPerformanceMonitor,
@@ -46,12 +68,14 @@ export const useRuntimeControls = ({
   // Decision: derive persisted runtime config during initial render instead of
   // syncing state in an effect. This preserves boot behavior without a second render.
   const [initialWsConfig] = useState(getInitialWebSocketConfig);
+  const [initialLockedSessionId] = useState(getInitialLockedSessionId);
   const [voicePreset, setVoicePreset] = useState<VoicePreset>(getInitialVoicePreset);
   const [wsPresetId, setWsPresetId] = useState<WsPresetId>(initialWsConfig.presetId);
   const [wsUrl, setWsUrl] = useState<string>(initialWsConfig.url);
   const [wsInput, setWsInput] = useState<string>(initialWsConfig.url);
   const [isSwitchingWs, setIsSwitchingWs] = useState(false);
-  const [sessionIdInput, setSessionIdInput] = useState<string>('');
+  const [sessionIdInput, setSessionIdInput] = useState<string>(initialLockedSessionId ?? '');
+  const [isSessionIdLocked, setIsSessionIdLocked] = useState(Boolean(initialLockedSessionId));
 
   useEffect(() => {
     console.log('[WS CONFIG] boot', {
@@ -84,12 +108,37 @@ export const useRuntimeControls = ({
     window.location.reload();
   }, [resetPerformanceMonitor]);
 
+  const validateSessionId = useCallback((value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.length !== BINARY_MESSAGE.NANOID_SIZE) {
+      alert(`sessionId 必须是 ${BINARY_MESSAGE.NANOID_SIZE} 个字符`);
+      return null;
+    }
+    return trimmed;
+  }, []);
+
   const applySessionId = useCallback(() => {
-    const trimmed = sessionIdInput.trim();
+    const trimmed = validateSessionId(sessionIdInput);
     if (!trimmed) return;
 
     const voiceChatCore = realTimeRef.current?.getVoiceChatCore();
+    if (isSessionIdLocked) {
+      try {
+        const lockedSessionId = voiceChatCore?.lockSessionId(trimmed) ?? trimmed;
+        persistLockedSessionId(lockedSessionId);
+        setSessionIdInput(lockedSessionId);
+        console.log('[SESSION] lock:apply', { sessionId: lockedSessionId });
+      } catch (error) {
+        alert(error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
     if (!voiceChatCore?.isConnected) {
+      if (isSessionIdLocked) {
+        return;
+      }
       alert('WebSocket未连接，无法切换sessionId');
       return;
     }
@@ -97,8 +146,49 @@ export const useRuntimeControls = ({
     console.log('[SESSION] switch', { from: voiceChatCore.currentSessionId, to: trimmed });
     resetPerformanceMonitor('session_switch');
     voiceChatCore.getConnectionManager().recreateSession(trimmed);
-    setSessionIdInput('');
-  }, [realTimeRef, resetPerformanceMonitor, sessionIdInput]);
+    if (!isSessionIdLocked) {
+      setSessionIdInput('');
+    }
+  }, [isSessionIdLocked, realTimeRef, resetPerformanceMonitor, sessionIdInput, validateSessionId]);
+
+  const setSessionIdLock = useCallback((nextLocked: boolean) => {
+    const voiceChatCore = realTimeRef.current?.getVoiceChatCore();
+
+    if (!nextLocked) {
+      voiceChatCore?.unlockSessionId();
+      try {
+        localStorage.removeItem(LOCKED_SESSION_ID_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+      setIsSessionIdLocked(false);
+      console.log('[SESSION] lock:off');
+      return;
+    }
+
+    const candidate = sessionIdInput.trim() || voiceChatCore?.currentSessionId || '';
+    if (!candidate.trim()) {
+      alert('先输入 sessionId，或等待当前 session 创建后再锁定');
+      return;
+    }
+    const trimmed = validateSessionId(candidate);
+    if (!trimmed) return;
+
+    try {
+      const lockedSessionId = voiceChatCore?.lockSessionId(trimmed) ?? trimmed;
+      persistLockedSessionId(lockedSessionId);
+      setIsSessionIdLocked(true);
+      setSessionIdInput(lockedSessionId);
+      console.log('[SESSION] lock:on', { sessionId: lockedSessionId });
+
+      if (voiceChatCore?.isConnected) {
+        resetPerformanceMonitor('session_lock');
+        voiceChatCore.getConnectionManager().recreateSession(lockedSessionId);
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  }, [realTimeRef, resetPerformanceMonitor, sessionIdInput, validateSessionId]);
 
   const applyVoicePreset = useCallback((nextPreset: VoicePreset) => {
     setVoicePreset(nextPreset);
@@ -109,24 +199,21 @@ export const useRuntimeControls = ({
       // ignore
     }
 
-    const voice_setting = nextPreset === 'soft'
-      ? { voice_id: CUSTOM_VOICE_ID, speed: 1.0, pitch: 0, vol: 1.0 }
-      : undefined;
+    const voice_setting = voiceSettingForPreset(nextPreset);
 
+    // Decision: voice preset changes are same-session session_config updates.
+    // setSessionConfig persists the default and resends session_config when connected.
     realTimeRef.current?.setSessionConfig?.({ voice_setting });
-
-    const voiceChatCore = realTimeRef.current?.getVoiceChatCore?.();
-    if (voiceChatCore?.isConnected) {
-      voiceChatCore.startNewSession?.({ voice_setting });
-    }
   }, [realTimeRef]);
 
   return {
     applySessionId,
     applyVoicePreset,
     applyWebSocketUrl,
+    isSessionIdLocked,
     isSwitchingWs,
     sessionIdInput,
+    setSessionIdLock,
     setSessionIdInput,
     setWsInput,
     setWsPresetId,

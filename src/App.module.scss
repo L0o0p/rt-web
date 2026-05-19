@@ -39,6 +39,8 @@ body {
     //   background-color: $primary-color;
     padding: 2rem;
     gap: 2rem;
+    overflow-y: auto;
+    justify-content: flex-start;
 
     // 移动端适配 - 保持适当的边距
     @media (max-width: 768px) {
@@ -46,14 +48,14 @@ body {
         height: 100vh;
         padding: 1rem;
         gap: 1rem;
-        justify-content: center;
+        justify-content: flex-start;
     }
 
     @media (max-width: 480px) {
         width: calc(100vw - 1.5rem);
         padding: 0.75rem;
         gap: 0.5rem;
-        justify-content: center;
+        justify-content: flex-start;
     }
 
     @media (max-width: 360px) {
@@ -273,12 +275,46 @@ body {
     cursor: pointer;
 }
 
+.wsConfigCheckbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    color: #fff;
+}
+
 .wsConfigHint {
     opacity: 0.85;
     max-width: min(520px, calc(100vw - 24px));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.pipelineModeBar {
+    width: min(540px, calc(100vw - 24px));
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.pipelineModeButton {
+    min-height: 34px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.86);
+    cursor: pointer;
+}
+
+.pipelineModeButtonActive {
+    background: #fff;
+    color: #202342;
+    border-color: #fff;
 }
 
 

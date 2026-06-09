@@ -27,11 +27,36 @@ body {
     box-sizing: border-box;
 }
 
+.appShell {
+    // Decision: the signal monitor is a real operator surface, not a floating
+    // debug card. It owns a 100vh sidebar column and collapses to a narrow rail.
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    overflow: hidden;
+    background-color: $primary-color;
+    transition: grid-template-columns 0.22s ease;
+}
+
+.appShellSidebarCollapsed {
+    grid-template-columns: minmax(0, 1fr) 54px;
+}
+
+@media (max-width: 900px) {
+    .appShell,
+    .appShellSidebarCollapsed {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 .container {
     // background-color: #787CF0;
     background-color: $primary-color;
-    width: calc(100vw - 4rem);
-    height: calc(100vh - 4rem);
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -44,7 +69,6 @@ body {
 
     // 移动端适配 - 保持适当的边距
     @media (max-width: 768px) {
-        width: calc(100vw - 2rem);
         height: 100vh;
         padding: 1rem;
         gap: 1rem;
@@ -52,14 +76,12 @@ body {
     }
 
     @media (max-width: 480px) {
-        width: calc(100vw - 1.5rem);
         padding: 0.75rem;
         gap: 0.5rem;
         justify-content: flex-start;
     }
 
     @media (max-width: 360px) {
-        width: calc(100vw - 1rem);
         padding: 0.5rem;
         gap: 0.25rem;
     }
@@ -432,7 +454,7 @@ body {
 
 
 .performanceMonitor {
-    position: fixed;
+    position: absolute;
     top: 20px;
     right: 20px;
     background: rgba(0, 0, 0, 0.85);

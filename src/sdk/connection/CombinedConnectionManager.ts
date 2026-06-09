@@ -11,6 +11,11 @@ import { EventEmitter } from '../utils/EventEmitter';
 import {
   decodeResponseAudioDeltaMessage
 } from '../protocol/BinaryAudioDecoder';
+import {
+  SIGNAL_MONITOR_EVENT,
+  isAudioSignalType,
+  type SignalMonitorFrame,
+} from '../protocol/SignalMonitor';
 
 import type {
   BinaryAudioProtocolConfig,
@@ -176,6 +181,31 @@ interface FunctionCallOutputOptions {
   ttsText?: string;
 }
 
+const COMMAND_SIGNAL_NAMES: Partial<Record<CommandId, string>> = {
+  [CommandId.Start]: 'session_config',
+  [CommandId.Stop]: 'session.stop',
+  [CommandId.AudioChunk]: 'audio_chunk',
+  [CommandId.TextData]: 'text_data',
+  [CommandId.StopInput]: 'input_audio_buffer.speech_stopped',
+  [CommandId.ImageData]: 'image_data',
+  [CommandId.Ping]: 'ping',
+  [CommandId.Result]: 'function_call_output',
+  [CommandId.Error]: 'error',
+};
+
+const enumNameForValue = (values: Readonly<Record<string, number>>, target?: number): string | undefined => {
+  if (target === undefined) return undefined;
+  return Object.entries(values).find(([, value]) => value === target)?.[0];
+};
+
+const readPayloadType = (payload: unknown): string | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const type = (payload as { type?: unknown }).type;
+  return typeof type === 'string' ? type : undefined;
+};
+
+const measureTextBytes = (value: string): number => new TextEncoder().encode(value).length;
+
 export class CombinedConnectionManager extends EventEmitter {
   // WebSocket连接相关属性
   private websocket: WebSocket | null = null;
@@ -219,6 +249,14 @@ export class CombinedConnectionManager extends EventEmitter {
     this.defaultSessionConfig = defaultSessionConfig;
     this.lockedSessionId = lockedSessionId ? this.requireValidSessionId(lockedSessionId, 'locked sessionId') : undefined;
     this.sessionId = this.lockedSessionId ?? sessionId ?? this.generateSessionId();
+  }
+
+  private emitSignalFrame(frame: SignalMonitorFrame): void {
+    this.emit(SIGNAL_MONITOR_EVENT, frame);
+  }
+
+  private signalTypeForCommand(commandId: CommandId, payload?: unknown): string {
+    return readPayloadType(payload) ?? COMMAND_SIGNAL_NAMES[commandId] ?? `command.${commandId}`;
   }
 
   /**
@@ -291,6 +329,19 @@ export class CombinedConnectionManager extends EventEmitter {
 
       try {
         this.websocket.send(messageStr);
+        const type = this.signalTypeForCommand(commandID, message);
+        this.emitSignalFrame({
+          direction: 'up',
+          transport: 'json',
+          type,
+          protocolId,
+          protocolName: enumNameForValue(ProtocolId, protocolId),
+          commandId: commandID,
+          commandName: enumNameForValue(CommandId, commandID),
+          sessionId: this.sessionId,
+          bytes: measureTextBytes(messageStr),
+          audioSignal: isAudioSignalType(type),
+        });
         // 移除频繁的成功发送日志
       } catch (error) {
         logger.error(`发送文本消息失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -326,7 +377,7 @@ export class CombinedConnectionManager extends EventEmitter {
         const binaryMessage = BinaryMessage.createStopInput(this.sessionId);
         const bytes = binaryMessage.toBytes();
         logger.info(`[StopInput] 发送二进制stopInput消息 - 会话ID: ${this.sessionId}, 大小: ${bytes.length}字节`);
-        this.websocket.send(bytes);
+        this.sendBinaryMessage(binaryMessage);
       } else {
         // 方式1：WebSocket JSON 消息（推荐）
         const stopInputPayload = {
@@ -340,16 +391,8 @@ export class CombinedConnectionManager extends EventEmitter {
           ? ProtocolId.Translation
           : ProtocolId.Asr;
 
-        const fullMessage = {
-          protocol_id: stopInputProtocolId,
-          command_id: CommandId.StopInput,
-          session_id: this.sessionId,
-          payload: stopInputPayload
-        } satisfies WebSocketMessage;
-
-        const messageStr = JSON.stringify(fullMessage);
         logger.info(`[StopInput] 发送JSON stopInput消息 - 会话ID: ${this.sessionId}, payload:`, stopInputPayload);
-        this.websocket.send(messageStr);
+        this.sendTextMessage(stopInputPayload, CommandId.StopInput, stopInputProtocolId);
       }
     } catch (error) {
       logger.error(`[StopInput] 发送失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -406,6 +449,19 @@ export class CombinedConnectionManager extends EventEmitter {
         }
 
         this.websocket.send(bytes);
+        const type = this.signalTypeForCommand(message.header.commandId);
+        this.emitSignalFrame({
+          direction: 'up',
+          transport: 'binary',
+          type,
+          protocolId: message.header.protocolId,
+          protocolName: enumNameForValue(ProtocolId, message.header.protocolId),
+          commandId: message.header.commandId,
+          commandName: enumNameForValue(CommandId, message.header.commandId),
+          sessionId: message.header.sessionId,
+          bytes: bytes.length,
+          audioSignal: isAudioSignalType(type),
+        });
         // 移除频繁的成功发送日志
       } catch (error) {
         logger.error(`[BINARY] 发送二进制消息失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -807,6 +863,21 @@ export class CombinedConnectionManager extends EventEmitter {
             actualMessage.session_id = rawData.session_id;
           }
 
+          if (messageType) {
+            this.emitSignalFrame({
+              direction: 'down',
+              transport: 'json',
+              type: messageType,
+              protocolId: rawData.protocol_id,
+              protocolName: enumNameForValue(ProtocolId, rawData.protocol_id),
+              commandId: rawData.command_id,
+              commandName: enumNameForValue(CommandId, rawData.command_id),
+              sessionId: rawData.session_id ?? actualMessage.session_id,
+              bytes: measureTextBytes(event.data),
+              audioSignal: isAudioSignalType(messageType),
+            });
+          }
+
           // 🔧 修复：检查是否收到正确的音频缓冲区信令事件
           if (messageType && [
             'output_audio_buffer.started',
@@ -1075,6 +1146,19 @@ export class CombinedConnectionManager extends EventEmitter {
               actualMessage.session_id = jsonData.session_id;
             }
 
+            this.emitSignalFrame({
+              direction: 'down',
+              transport: 'binary',
+              type: messageType,
+              protocolId: jsonData.protocol_id,
+              protocolName: enumNameForValue(ProtocolId, jsonData.protocol_id),
+              commandId: jsonData.command_id,
+              commandName: enumNameForValue(CommandId, jsonData.command_id),
+              sessionId: jsonData.session_id ?? actualMessage.session_id,
+              bytes: buffer.byteLength,
+              audioSignal: isAudioSignalType(messageType),
+            });
+
             // ========== 高精度性能监控 ==========
             const latency = this.stopHighPrecisionTimer(messageType);
             if (latency !== null) {
@@ -1128,6 +1212,15 @@ export class CombinedConnectionManager extends EventEmitter {
                 if (latency !== null) {
                   logger.info(`[PERF] High-precision latency for ${messageType}: ${latency.toFixed(3)}ms`);
                 }
+
+                this.emitSignalFrame({
+                  direction: 'down',
+                  transport: 'binary',
+                  type: messageType,
+                  sessionId: controlEvent.session_id,
+                  bytes: 8 + controlDataLength,
+                  audioSignal: isAudioSignalType(messageType),
+                });
 
                 // 发射控制事件
                 this.emit(messageType, controlEvent);
@@ -1210,6 +1303,17 @@ export class CombinedConnectionManager extends EventEmitter {
         logger.info(`[PERF] High-precision latency for binary_audio_delta: ${latency.toFixed(3)}ms`);
       }
 
+      this.emitSignalFrame({
+        direction: 'down',
+        transport: 'binary',
+        type: 'binary_audio_delta',
+        protocolName: 'Tts',
+        commandName: 'AudioChunk',
+        bytes: buffer.byteLength,
+        audioSignal: true,
+        summary: decodedAudio.responseId,
+      });
+
       // 性能优化：移除频繁的调试日志
       this.emit('binary_audio_delta', {
         type: 'binary_audio_delta',
@@ -1222,13 +1326,23 @@ export class CombinedConnectionManager extends EventEmitter {
 
     } catch (error) {
       logger.error(`[SDK] 二进制音频解码失败:`, error);
+      const bufferSize = data instanceof ArrayBuffer ? data.byteLength :
+        data instanceof Blob ? data.size : undefined;
+
+      this.emitSignalFrame({
+        direction: 'down',
+        transport: 'binary',
+        type: 'binary_audio_error',
+        bytes: bufferSize,
+        audioSignal: false,
+        summary: error instanceof Error ? error.message : String(error),
+      });
 
       // 发射错误事件
       this.emit('binary_audio_error', {
         type: 'binary_audio_error',
         error: error instanceof Error ? error.message : String(error),
-        bufferSize: data instanceof ArrayBuffer ? data.byteLength :
-          data instanceof Blob ? data.size : undefined
+        bufferSize
       });
     }
   }

@@ -1,0 +1,367 @@
+.sidebar {
+  position: relative;
+  height: 100vh;
+  min-height: 100vh;
+  min-width: 0;
+  background: #111827;
+  color: #f8fafc;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.collapsed {
+  background: #0f172a;
+}
+
+.toggleButton {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 56px 14px 14px;
+  box-sizing: border-box;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title,
+.subtitle {
+  margin: 0;
+}
+
+.title {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.subtitle {
+  margin-top: 4px;
+  color: rgba(248, 250, 252, 0.62);
+  font-size: 12px;
+}
+
+.totalRows {
+  min-width: 36px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 250, 252, 0.74);
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.traceMeta,
+.traceSession,
+.traceTime {
+  color: rgba(248, 250, 252, 0.58);
+}
+
+.directionCompare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compareMetric {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+
+.compareMetric span,
+.compareMetric small {
+  display: block;
+}
+
+.compareMetric span {
+  color: rgba(248, 250, 252, 0.74);
+  font-size: 12px;
+}
+
+.compareMetric strong {
+  display: block;
+  margin-top: 4px;
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.compareMetric small {
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(248, 250, 252, 0.58);
+  font-size: 11px;
+}
+
+.compareMetricUp {
+  background: rgba(14, 165, 233, 0.16);
+  border-color: rgba(125, 211, 252, 0.28);
+}
+
+.compareMetricDown {
+  background: rgba(139, 92, 246, 0.16);
+  border-color: rgba(196, 181, 253, 0.28);
+}
+
+.compareBar {
+  height: 8px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.compareBarUp,
+.compareBarDown {
+  transition: flex-basis 0.2s ease;
+}
+
+.compareBarUp {
+  background: #38bdf8;
+}
+
+.compareBarDown {
+  background: #a78bfa;
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.modeButton {
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(248, 250, 252, 0.68);
+  cursor: pointer;
+}
+
+.modeButtonActive {
+  background: #f8fafc;
+  border-color: #f8fafc;
+  color: #111827;
+}
+
+.sections {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.section {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timelineSection {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(248, 250, 252, 0.78);
+  font-size: 12px;
+}
+
+.traceList {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 2px 0 0;
+  list-style: none;
+  overflow: auto;
+}
+
+.traceItem {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.traceItemUp {
+  border-left: 4px solid #38bdf8;
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.18), rgba(255, 255, 255, 0.055) 34%);
+}
+
+.traceItemDown {
+  border-left: 4px solid #a78bfa;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.18), rgba(255, 255, 255, 0.055) 34%);
+}
+
+.traceHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.traceTitle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.directionPill {
+  min-width: 46px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  box-sizing: border-box;
+}
+
+.directionUp {
+  background: rgba(56, 189, 248, 0.26);
+  color: #e0f2fe;
+}
+
+.directionDown {
+  background: rgba(167, 139, 250, 0.26);
+  color: #ede9fe;
+}
+
+.traceType,
+.traceMeta,
+.traceSession,
+.traceSummary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traceType {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.traceTime,
+.traceMeta,
+.traceSession {
+  font-size: 11px;
+}
+
+.traceMeta,
+.traceSession,
+.traceSummary {
+  margin-top: 5px;
+}
+
+.traceSummary {
+  color: rgba(248, 250, 252, 0.76);
+  font-size: 12px;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 86px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: rgba(248, 250, 252, 0.44);
+  font-size: 12px;
+}
+
+.rail {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding-top: 58px;
+  box-sizing: border-box;
+}
+
+.railTitle {
+  writing-mode: vertical-rl;
+  color: rgba(248, 250, 252, 0.82);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.railCount {
+  width: 38px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 250, 252, 0.78);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 1200;
+    width: min(380px, 88vw);
+  }
+
+  .collapsed {
+    width: 54px;
+  }
+}

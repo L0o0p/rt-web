@@ -243,9 +243,9 @@
 
 .traceHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: start;
 }
 
 .traceTitle {
@@ -279,7 +279,6 @@
   color: #ede9fe;
 }
 
-.traceType,
 .traceMeta,
 .traceSession,
 .traceSummary {
@@ -292,6 +291,13 @@
   color: #fff;
   font-size: 13px;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.traceTime {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .traceTime,
@@ -358,7 +364,7 @@
     top: 0;
     right: 0;
     z-index: 1200;
-    width: min(380px, 88vw);
+    width: min(520px, 94vw);
   }
 
   .collapsed {

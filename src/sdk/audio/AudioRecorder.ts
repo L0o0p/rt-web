@@ -261,21 +261,19 @@ export class AudioRecorder {
             threshold: this.vadThreshold,
         });
 
-        if (!this.vadEnabled) {
-            this.vadEnabled = true;
-        }
-
-        // 启动前按需预加载模型（懒加载），失败不阻塞
-        const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
-        console.log('[AudioRecorder] startVADProcessing env', { runId, crossOriginIsolated: isIsolated });
-        // Decision: configure ORT before upstream speechFilter() initializes,
-        // but keep preload best-effort. A transient model fetch/cache failure
-        // must not block microphone capture; upstream VAD still owns session
-        // creation and will retry the actual model load.
-        try {
-            await preloadVadModelOnce();
-        } catch (error) {
-            console.warn('[AudioRecorder] VAD 模型启动前预加载失败，继续按需初始化:', error);
+        if (this.vadEnabled) {
+            // 启动前按需预加载模型（懒加载），失败不阻塞
+            const isIsolated = (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+            console.log('[AudioRecorder] startVADProcessing env', { runId, crossOriginIsolated: isIsolated });
+            // Decision: configure ORT before upstream speechFilter() initializes,
+            // but keep preload best-effort. A transient model fetch/cache failure
+            // must not block microphone capture; upstream VAD still owns session
+            // creation and will retry the actual model load.
+            try {
+                await preloadVadModelOnce();
+            } catch (error) {
+                console.warn('[AudioRecorder] VAD 模型启动前预加载失败，继续按需初始化:', error);
+            }
         }
 
         // 获取音频流
@@ -290,35 +288,41 @@ export class AudioRecorder {
         const abort = new AbortController();
         this.pipelineAbort = abort;
 
-        // 创建 VAD 转换流（仅做判定，不改动分片）
-        this.vadTransform = this.createVADTransform({
-            onSpeechStart: () => {
-                this.isSpeaking = true;
-                if (this.onSpeechStartCallback) this.onSpeechStartCallback();
-                // 标记需要回溯冲刷
-                this.needFlushPreBuffer = true;
-            },
-            onSpeechEnd: (speechAudio: Float32Array) => {
-                this.isSpeaking = false;
-                if (this.onSpeechEndCallback) this.onSpeechEndCallback(speechAudio);
-            },
-            onMisfire: undefined,
-            threshold: this.vadThreshold,
-            noEmit: true // 不从 VAD 分支输出音频，避免改变帧边界
-        });
+        let streamForEncode = audioStream;
+        let vadPipelinePromise: Promise<void> | undefined;
 
-        // 兼容旧结构：此处不再创建统一的 speechProcessor，改为分支管道
-        // 将音频流拆为两路：一路用于 VAD 判定（无音频输出），一路用于编码（保持 worklet 的帧大小）
-        const [streamForVad, streamForEncode] = audioStream.tee();
+        if (this.vadEnabled) {
+            // 创建 VAD 转换流（仅做判定，不改动分片）
+            this.vadTransform = this.createVADTransform({
+                onSpeechStart: () => {
+                    this.isSpeaking = true;
+                    if (this.onSpeechStartCallback) this.onSpeechStartCallback();
+                    // 标记需要回溯冲刷
+                    this.needFlushPreBuffer = true;
+                },
+                onSpeechEnd: (speechAudio: Float32Array) => {
+                    this.isSpeaking = false;
+                    if (this.onSpeechEndCallback) this.onSpeechEndCallback(speechAudio);
+                },
+                onMisfire: undefined,
+                threshold: this.vadThreshold,
+                noEmit: true // 不从 VAD 分支输出音频，避免改变帧边界
+            });
 
-        // VAD 分支：保持流动以触发判定回调
-        const vadPipelinePromise = streamForVad
-            .pipeThrough(this.vadTransform)
-            .pipeTo(
-                new WritableStream<Float32Array>({ write: (): void => { /* no-op */ } }),
-                { signal: abort.signal }
-            )
-            .catch(error => { throw error; });
+            // 兼容旧结构：此处不再创建统一的 speechProcessor，改为分支管道
+            // 将音频流拆为两路：一路用于 VAD 判定（无音频输出），一路用于编码（保持 worklet 的帧大小）
+            const [streamForVad, encodeStream] = audioStream.tee();
+            streamForEncode = encodeStream;
+
+            // VAD 分支：保持流动以触发判定回调
+            vadPipelinePromise = streamForVad
+                .pipeThrough(this.vadTransform)
+                .pipeTo(
+                    new WritableStream<Float32Array>({ write: (): void => { /* no-op */ } }),
+                    { signal: abort.signal }
+                )
+                .catch(error => { throw error; });
+        }
 
         // 编码分支：仅在说话时向下游发送数据
         const encodePipelinePromise = streamForEncode
@@ -359,7 +363,7 @@ export class AudioRecorder {
             }), { signal: abort.signal })
             .catch(error => { throw error; });
 
-        const pipelinePromise = Promise.all([vadPipelinePromise, encodePipelinePromise]);
+        const pipelinePromise = Promise.all(vadPipelinePromise ? [vadPipelinePromise, encodePipelinePromise] : [encodePipelinePromise]);
         // 不等待pipeline完成
         pipelinePromise.catch(() => undefined);
 

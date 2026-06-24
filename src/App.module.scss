@@ -33,7 +33,7 @@ body {
     width: 100vw;
     height: 100vh;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    grid-template-columns: minmax(0, 1fr) minmax(460px, 540px);
     overflow: hidden;
     background-color: $primary-color;
     transition: grid-template-columns 0.22s ease;
@@ -177,6 +177,41 @@ body {
     @media (max-width: 360px) {
         font-size: 11px;
     }
+}
+
+.localVadSwitch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.36);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    backdrop-filter: blur(8px);
+
+    input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: #ffffff;
+    }
+
+    strong {
+        font-size: 12px;
+        font-weight: 700;
+        opacity: 0.9;
+    }
+}
+
+.wsMicHint {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
 }
 
 @keyframes fadeInUp {

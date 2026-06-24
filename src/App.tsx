@@ -81,6 +81,16 @@ const PIPELINE_OPTIONS: Array<{ mode: PipelineMode; label: string }> = [
   { mode: 'meeting', label: '会议' },
 ];
 
+const formatSignalClock = (date: Date) => {
+  const time = date.toLocaleTimeString('zh-CN', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${time}.${date.getMilliseconds().toString().padStart(3, '0')}`;
+};
+
 export const App = () => {
   const [isImageUploadSectionExpanded, setIsImageUploadSectionExpanded] = useState(false); // 默认展示响应显示
   const [isSignalSidebarCollapsed, setIsSignalSidebarCollapsed] = useState(false);
@@ -127,22 +137,6 @@ export const App = () => {
   useEffect(() => {
     realTime.current = new RealTime()
 
-    // 页面打开时预加载 VAD 模型，避免用户点击时等待 WASM 加载
-    const preloadVADModel = async () => {
-      try {
-        console.log('[APP] 页面打开，预加载 VAD 模型...');
-        const audioManager = realTime.current?.getAudioManager();
-        if (audioManager) {
-          await audioManager.preloadModel();
-          console.log('[APP] VAD 模型预加载完成');
-        }
-      } catch (error) {
-        console.error('[APP] VAD 模型预加载失败:', error);
-        // 预加载失败不阻塞，后续按需加载
-      }
-    };
-
-    preloadVADModel();
   }, [])
   const { currentSessionId, sessionStatus } = useSessionStatus({ realTimeRef: realTime });
 
@@ -221,7 +215,15 @@ export const App = () => {
 
   // 性能监控显示控制
   const [isPerformanceMonitorVisible, setIsPerformanceMonitorVisible] = useState(true);
-  const { isUserSpeaking, record, talkHint } = useLocalVadUplink({ realTimeRef: realTime });
+  const {
+    isLocalVadEnabled,
+    isUserSpeaking,
+    record,
+    startMicrophoneFromServer,
+    stopMicrophoneFromServer,
+    talkHint,
+    toggleLocalVadEnabled,
+  } = useLocalVadUplink({ realTimeRef: realTime });
   const [pipelineMode, setPipelineMode] = useState<PipelineMode>('dialogue');
 
   const switchPipelineMode = useCallback((nextMode: PipelineMode) => {
@@ -267,12 +269,7 @@ export const App = () => {
       const row: SignalSidebarRow = {
         ...frame,
         id: `${receivedAt.getTime()}_${signalRowSeqRef.current++}`,
-        clock: receivedAt.toLocaleTimeString('zh-CN', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
+        clock: formatSignalClock(receivedAt),
         packetCount: 1,
       };
 
@@ -373,6 +370,10 @@ export const App = () => {
 
         switch (eventName) {
           case 'input_audio_buffer.speech_stopped': {
+            if (!isLocalVadEnabled) {
+              void stopMicrophoneFromServer();
+            }
+
             // ========== 高精度响应延迟计时开始 ==========
             // 当收到 input_audio_buffer.speech_stopped 事件时，启动高精度计时器
             // 优先使用 binary_audio_delta 事件进行延迟计算，response.audio.delta 作为备用
@@ -620,6 +621,10 @@ export const App = () => {
             } else {
               console.log('[APP] 🔴 AudioPlayer实例已为空，无需清理');
             }
+
+            if (eventName === 'output_audio_buffer.stopped' && !isLocalVadEnabled) {
+              void startMicrophoneFromServer();
+            }
             break;
           }
 
@@ -673,17 +678,19 @@ export const App = () => {
       });
 
       // 添加通用事件监听器，用于调试所有收到的事件
-      voiceChatCore.on('*', (eventName: string, payload: any) => {
+      const handleAnyEvent = (eventName: string, payload: any) => {
         if (eventName.includes('function_call') || eventName.includes('reminder')) {
           console.log('[DEBUG] 🔔 收到相关事件:', eventName, JSON.stringify(payload).substring(0, 200));
         }
-      });
+      };
+      voiceChatCore.on('*', handleAnyEvent);
 
 
       // 清理
       return () => {
         console.log(`[DEBUG] 清理事件监听器`);
         voiceChatCore.off('audio_chunk', handleAudioDataReceived);
+        voiceChatCore.off('*', handleAnyEvent);
         handlers.forEach((h, name) => voiceChatCore.off(name, h));
 
         // 清理高精度性能监听器
@@ -700,7 +707,7 @@ export const App = () => {
     // 提供全局函数来添加日志
 
     return undefined;
-  }, [audioPlayerRef, isPlayingDownstreamAudioRef]); // 只在组件挂载时执行一次；这两个 ref 来自稳定 hook 返回值
+  }, [audioPlayerRef, isLocalVadEnabled, isPlayingDownstreamAudioRef, startMicrophoneFromServer, stopMicrophoneFromServer]);
 
   return (
     <div className={`${styles.appShell} ${isSignalSidebarCollapsed ? styles.appShellSidebarCollapsed : ''}`}>
@@ -715,8 +722,10 @@ export const App = () => {
         <div className={styles.mainSection}>
           {pipelineMode === 'dialogue' && (
             <VoiceStage
+              isLocalVadEnabled={isLocalVadEnabled}
               isUserSpeaking={isUserSpeaking}
               talkHint={talkHint}
+              onLocalVadToggle={toggleLocalVadEnabled}
               onRecord={record}
             />
           )}

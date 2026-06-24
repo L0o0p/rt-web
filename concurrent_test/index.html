@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebSocket 实时测试</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 24px;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    button {
+      padding: 8px 16px;
+      margin-right: 8px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button.primary {
+      background: #3b82f6;
+      color: #fff;
+    }
+    button.secondary {
+      background: #1f2937;
+      color: #e5e7eb;
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    #log {
+      margin-top: 16px;
+      padding: 12px;
+      background: #020617;
+      border-radius: 8px;
+      height: 520px;
+      overflow-y: auto;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #111827;
+      color: #9ca3af;
+      margin-left: 8px;
+    }
+    .field {
+      margin: 12px 0;
+    }
+    .field label {
+      display: block;
+      margin-bottom: 4px;
+      color: #94a3b8;
+      font-size: 13px;
+    }
+    .field input {
+      width: 360px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: none;
+      outline: none;
+      background: #1e293b;
+      color: #e5e7eb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Weike WebSocket 测试页 <span class="tag">浏览器版</span></h1>
+
+  <div style="margin-bottom: 12px;">
+    <button id="btnConnect" class="primary">1. 连接并创建会话</button>
+    <button id="btnSendAudio" class="secondary" disabled>2. 发送模拟音频</button>
+    <button id="btnSendText" class="secondary" disabled>3. 发送文本</button>
+    <button id="btnStopInput" class="secondary" disabled>停止输入</button>
+    <button id="btnStopSession" class="secondary" disabled>结束会话</button>
+  </div>
+
+  <div class="field">
+    <label>文本内容：</label>
+    <input id="textInput" type="text" value="你好，请帮我查询天气" />
+  </div>
+
+  <div id="log"></div>
+
+  <script src="test.js"></script>
+  <script>
+    const logEl = document.getElementById('log');
+    function log(...args) {
+      const time = new Date().toISOString().substr(11, 8);
+      logEl.textContent += '[' + time + '] ' + args.join(' ') + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(...args);
+    }
+
+    const btnConnect = document.getElementById('btnConnect');
+    const btnSendAudio = document.getElementById('btnSendAudio');
+    const btnSendText = document.getElementById('btnSendText');
+    const btnStopInput = document.getElementById('btnStopInput');
+    const btnStopSession = document.getElementById('btnStopSession');
+    const textInput = document.getElementById('textInput');
+
+    let client = null;
+
+    btnConnect.onclick = async () => {
+      if (client) {
+        log('已创建过 client，如需重连请刷新页面');
+        return;
+      }
+
+      client = new WeikeWebSocketClient();
+      log('开始连接 WebSocket...');
+
+      client.onMessage = (message) => {
+        log('收到消息:', JSON.stringify(message));
+      };
+
+      client.onError = (err) => {
+        log('WebSocket 错误:', (err && err.message) || err);
+      };
+
+      try {
+        await client.connect();
+        log('WebSocket 连接成功');
+
+        const sessionId = client.createSession({
+          mode: 'vad',
+          system_prompt: '你是一个智能语音助手',
+          enable_search: true
+        });
+
+        log('会话已创建，sessionId =', sessionId);
+
+        btnSendAudio.disabled = false;
+        btnSendText.disabled = false;
+        btnStopInput.disabled = false;
+        btnStopSession.disabled = false;
+        btnConnect.disabled = true;
+      } catch (e) {
+        log('连接失败: ', (e && e.message) || e);
+      }
+    };
+
+    btnSendAudio.onclick = () => {
+      if (!client) {
+        log('请先连接并创建会话');
+        return;
+      }
+      try {
+        const audioData = new Float32Array(16000); // 1 秒静音
+        client.sendAudio(audioData);
+        log('已发送一段模拟音频数据');
+      } catch (e) {
+        log('发送音频失败: ', (e && e.message) || e);
+      }
+    };
+
+    btnSendText.onclick = () => {
+      if (!client) {
+        log('请先连接并创建会话');
+        return;
+      }
+      const text = textInput.value || '';
+      try {
+        client.sendText(text);
+        log('已发送文本: ' + text);
+      } catch (e) {
+        log('发送文本失败: ', (e && e.message) || e);
+      }
+    };
+
+    btnStopInput.onclick = () => {
+      if (!client) {
+        log('请先连接并创建会话');
+        return;
+      }
+      try {
+        client.stopInput();
+        log('已发送 STOP_INPUT');
+      } catch (e) {
+        log('停止输入失败: ', (e && e.message) || e);
+      }
+    };
+
+    btnStopSession.onclick = () => {
+      if (!client) {
+        log('请先连接并创建会话');
+        return;
+      }
+      try {
+        client.stopSession();
+        log('已发送 STOP，会话结束');
+      } catch (e) {
+        log('结束会话失败: ', (e && e.message) || e);
+      }
+    };
+
+    window.addEventListener('beforeunload', () => {
+      if (client) {
+        client.disconnect();
+      }
+    });
+  </script>
+</body>
+</html>
+
+

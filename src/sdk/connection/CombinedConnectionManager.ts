@@ -763,7 +763,7 @@ export class CombinedConnectionManager extends EventEmitter {
         signal_only: false,
         asr_language: "zh",
         timezone: "Asia/Shanghai",
-        location: "中国",
+        location: "22.657,114.016",
         initial_burst_count: 10,
         initial_burst_delay_ms: 5,
         send_rate_multiplier: 1.0,

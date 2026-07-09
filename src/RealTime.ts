@@ -43,7 +43,7 @@ export class RealTime {
             asr_language: 'zh',
             mode: 'vad',
             timezone: 'Asia/Shanghai',
-            location: '中国',
+            location: '22.657,114.016',
             voice_setting: voiceSettingForPreset(voicePreset)
         };
         this.voiceChatCore = new VoiceChatCore(defaultConfig, lockedSessionId);

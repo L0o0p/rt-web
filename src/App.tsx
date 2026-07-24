@@ -101,6 +101,7 @@ export const App = () => {
   const [finalTexts, setFinalTexts] = useState<string[]>([]);
 
   const realTime = useRef<RealTime>()
+  const playbackDrainGenerationRef = useRef(0);
 
   // Reminder 处理 Hook
   const { handleReminderCall } = useReminderHandler();
@@ -556,6 +557,7 @@ export const App = () => {
           case 'output_audio_buffer.started': {
             const now = performance.now();
             const startedPayload = payload as any;
+            playbackDrainGenerationRef.current += 1;
             console.log('[APP] 🟢 信令时序诊断 - output_audio_buffer.started:', {
               timestamp: now,
               hasExistingPlayer: !!audioPlayerRef.current,
@@ -594,7 +596,11 @@ export const App = () => {
             break;
           }
 
-          case 'response.audio.done':
+          case 'response.audio.done': {
+            console.log('[APP] 音频生成完成，等待 output_audio_buffer.stopped 后排空本地播放队列');
+            break;
+          }
+
           case 'output_audio_buffer.stopped': {
             const now = performance.now();
             const stoppedPayload = payload as any;
@@ -606,25 +612,28 @@ export const App = () => {
               item_id: stoppedPayload.item_id
             });
 
-            // 停止处理：如果下行播放开关仍为开启，则不要把实例置空（否则后续音频会进入“未就绪”状态）
-            if (audioPlayerRef.current) {
-              console.log('[APP] 🔴 调用stopPlayback()停止音频播放');
-              audioPlayerRef.current.stopPlayback();
-              if (!isPlayingDownstreamAudioRef.current) {
-                audioPlayerRef.current = null;
-                console.log('[APP] 🔴 AudioPlayer实例已清理（下行播放已关闭）');
-              } else {
-                // 保持实例，等待下一段音频流
-                audioPlayerRef.current.clearQueue();
-                console.log('[APP] 🔴 AudioPlayer已停止并清空队列（保持实例以便后续继续播放）');
+            const player = audioPlayerRef.current;
+            const stoppedGeneration = playbackDrainGenerationRef.current;
+            void (async () => {
+              if (player && isPlayingDownstreamAudioRef.current) {
+                await player.finishPlayback();
+              } else if (player) {
+                player.stopPlayback();
+                if (audioPlayerRef.current === player) {
+                  audioPlayerRef.current = null;
+                }
               }
-            } else {
-              console.log('[APP] 🔴 AudioPlayer实例已为空，无需清理');
-            }
 
-            if (eventName === 'output_audio_buffer.stopped' && !isLocalVadEnabled) {
-              void startMicrophoneFromServer();
-            }
+              if (playbackDrainGenerationRef.current !== stoppedGeneration) {
+                console.log('[APP] 忽略已被新输出替换的 playback drain completion');
+                return;
+              }
+
+              console.log('[APP] AudioPlayer 本地队列已自然播放完毕');
+              if (!isLocalVadEnabled) {
+                await startMicrophoneFromServer();
+              }
+            })();
             break;
           }
 
@@ -632,19 +641,22 @@ export const App = () => {
           // 保留日志记录但移除错误的打断逻辑
           case 'response.cancel': {
             console.log('[APP] 📝 收到response.cancel事件（已由正确的信令机制处理）');
-            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
+            playbackDrainGenerationRef.current += 1;
+            audioPlayerRef.current?.clearQueue();
             break;
           }
 
           case 'output_audio_buffer.cleared': {
             console.log('[APP] 📝 收到output_audio_buffer.cleared事件（已由正确的信令机制处理）');
-            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
+            playbackDrainGenerationRef.current += 1;
+            audioPlayerRef.current?.clearQueue();
             break;
           }
 
           case 'conversation.item.truncated': {
             console.log('[APP] 📝 收到conversation.item.truncated事件（已由正确的信令机制处理）');
-            // 不再执行打断操作，由 output_audio_buffer.stopped 处理
+            playbackDrainGenerationRef.current += 1;
+            audioPlayerRef.current?.clearQueue();
             break;
           }
 

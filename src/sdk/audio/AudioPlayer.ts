@@ -7,6 +7,14 @@ export class AudioPlayer {
     private playbackNode: AudioWorkletNode | null = null;
     private workletReady: Promise<void> | null = null;
     private processorName: string;
+    private drainPromise: Promise<void> | null = null;
+    private resolveDrain: (() => void) | null = null;
+    private drainTimeoutId: number | null = null;
+    private finishPromise: Promise<void> | null = null;
+    private finishGeneration: number | null = null;
+    private playbackGeneration: number = 0;
+    private pendingChunkWrites: number = 0;
+    private pendingChunkWriteWaiters = new Set<() => void>();
 
     // 新增：智能打断控制
     private lastClearTime: number = 0;
@@ -80,11 +88,15 @@ export class AudioPlayer {
                     this.underrunCount = 0; // 缓冲区欠载计数
                     this.lastSample = 0; // 记录最后一个样本值，用于平滑过渡
                     this.totalSamplesReceived = 0; // 总接收的样本数
+                    this.endOfStream = false;
+                    this.drainNotified = false;
                     this.port.onmessage = (event) => {
                         const data = event.data;
                         if (!data) return;
                         if (data.type === 'push' && data.samples instanceof Float32Array) {
                             // 将一帧样本入队
+                            this.endOfStream = false;
+                            this.drainNotified = false;
                             this.totalSamplesReceived += data.samples.length;
                             
                             // 平滑处理：如果队列中有数据，对新数据的开头应用淡入，避免突变
@@ -144,6 +156,8 @@ export class AudioPlayer {
                             this.current = null;
                             this.readIndex = 0;
                             this.isPlaying = false;
+                            this.endOfStream = false;
+                            this.drainNotified = false;
                             if (this.debugMode) {
                                 console.log('[AudioWorklet] 🔴 队列已清空，清空计数:', this.clearCount);
                             }
@@ -156,9 +170,17 @@ export class AudioPlayer {
                             this.current = null;
                             this.readIndex = 0;
                             this.isPlaying = false;
+                            this.endOfStream = false;
+                            this.drainNotified = false;
                             this.clearCount = 0;
                             if (this.debugMode) {
                                 console.log('[AudioWorklet] 🔴 播放器已重置');
+                            }
+                        } else if (data.type === 'endOfStream') {
+                            this.endOfStream = true;
+                            if (!this.current && this.queue.length === 0 && !this.drainNotified) {
+                                this.drainNotified = true;
+                                this.port.postMessage({ type: 'drained' });
                             }
                         } else if (data.type === 'setDebugMode') {
                             this.debugMode = data.enabled;
@@ -182,6 +204,11 @@ export class AudioPlayer {
                                 const remainingSamples = framesNeeded - offset;
                                 const wasPlaying = this.isPlaying;
                                 this.isPlaying = false;
+
+                                if (this.endOfStream && !this.drainNotified) {
+                                    this.drainNotified = true;
+                                    this.port.postMessage({ type: 'drained' });
+                                }
 
                                 if (wasPlaying) {
                                     this.underrunCount++;
@@ -244,6 +271,12 @@ export class AudioPlayer {
                 numberOfOutputs: 1,
                 outputChannelCount: [1]
             });
+            this.playbackNode.port.onmessage = (event: MessageEvent) => {
+                if (event.data?.type === 'drained') {
+                    this.isPlaying = false;
+                    this.completePendingDrain();
+                }
+            };
             this.playbackNode.connect(this.audioContext!.destination);
         })();
 
@@ -253,6 +286,21 @@ export class AudioPlayer {
 
     // 播放音频分片（通过 AudioWorklet 精确拉流播放）
     async playAudioChunk(audioData: Uint8Array): Promise<void> {
+        const generation = this.playbackGeneration;
+        this.pendingChunkWrites += 1;
+        try {
+            await this.playAudioChunkForGeneration(audioData, generation);
+        } finally {
+            this.pendingChunkWrites -= 1;
+            if (this.pendingChunkWrites === 0) {
+                const waiters = [...this.pendingChunkWriteWaiters];
+                this.pendingChunkWriteWaiters.clear();
+                waiters.forEach(resolve => resolve());
+            }
+        }
+    }
+
+    private async playAudioChunkForGeneration(audioData: Uint8Array, generation: number): Promise<void> {
         if (!this.audioContext) {
             this.initAudioContext();
             if (!this.audioContext) {
@@ -333,6 +381,9 @@ export class AudioPlayer {
             }
 
             // 将样本推送到播放队列，使用可转移对象减少拷贝
+            if (generation !== this.playbackGeneration) {
+                return;
+            }
             if (this.playbackNode) {
                 this.playbackNode.port.postMessage({ type: 'push', samples: floatData }, [floatData.buffer]);
                 if (this.debugMode) {
@@ -350,8 +401,69 @@ export class AudioPlayer {
         }
     }
 
+    finishPlayback(): Promise<void> {
+        const generation = this.playbackGeneration;
+        if (this.finishPromise && this.finishGeneration === generation) {
+            return this.finishPromise;
+        }
+
+        const finishPromise = this.finishPlaybackAfterPendingWrites(generation);
+        const trackedFinishPromise = finishPromise.finally(() => {
+            if (this.finishPromise === trackedFinishPromise) {
+                this.finishPromise = null;
+                this.finishGeneration = null;
+            }
+        });
+        this.finishPromise = trackedFinishPromise;
+        this.finishGeneration = generation;
+        return trackedFinishPromise;
+    }
+
+    private async finishPlaybackAfterPendingWrites(generation: number): Promise<void> {
+        if (this.pendingChunkWrites > 0) {
+            await new Promise<void>(resolve => this.pendingChunkWriteWaiters.add(resolve));
+        }
+        if (generation !== this.playbackGeneration) {
+            return;
+        }
+        await this.drainPlaybackQueue();
+    }
+
+    private drainPlaybackQueue(): Promise<void> {
+        if (!this.playbackNode || !this.isPlaying) {
+            this.completePendingDrain();
+            return Promise.resolve();
+        }
+        if (this.drainPromise) {
+            return this.drainPromise;
+        }
+
+        this.drainPromise = new Promise<void>(resolve => {
+            this.resolveDrain = resolve;
+        });
+        this.drainTimeoutId = window.setTimeout(() => {
+            console.warn('[AudioPlayer] AudioWorklet drain acknowledgement timed out');
+            this.completePendingDrain();
+        }, 5_000);
+        this.playbackNode.port.postMessage({ type: 'endOfStream' });
+        return this.drainPromise;
+    }
+
+    private completePendingDrain(): void {
+        if (this.drainTimeoutId !== null) {
+            window.clearTimeout(this.drainTimeoutId);
+            this.drainTimeoutId = null;
+        }
+        const resolve = this.resolveDrain;
+        this.resolveDrain = null;
+        this.drainPromise = null;
+        resolve?.();
+    }
+
     // 清空音频队列 - 用于音频打断（高性能优化版本）
     clearQueue(): void {
+        this.playbackGeneration += 1;
+        this.completePendingDrain();
         const now = performance.now();
 
         // 智能频率检查：防止过于频繁的清空操作
@@ -392,6 +504,8 @@ export class AudioPlayer {
 
     // 强制重置播放器 - 用于彻底的音频打断（优化版本）
     forceReset(): void {
+        this.playbackGeneration += 1;
+        this.completePendingDrain();
         const now = performance.now();
 
         // 智能频率检查：防止过于频繁的重置操作

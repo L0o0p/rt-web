@@ -3,7 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { RealTime } from '../RealTime';
 import { ProtocolId } from '../sdk/protocol/ClientProtocol';
 import type { SessionConfigPayload } from '../sdk/protocol/ClientProtocol';
-import type { SessionStatus } from '../app/architectureDecisions';
+import { DEFAULT_SESSION_LOCATION, type SessionStatus } from '../app/architectureDecisions';
 import styles from './SimulMeetingTestPanel.module.scss';
 
 export type TestProfile = 'interpret' | 'meeting';
@@ -139,7 +139,7 @@ export const SimulMeetingTestPanel = ({
       enable_tts: isMeeting ? false : enableTts,
       enable_summary: isMeeting ? true : enableSummary,
       timezone: 'Asia/Shanghai',
-      location: '22.657,114.016',
+      location: DEFAULT_SESSION_LOCATION,
       initial_burst_count: 10,
       initial_burst_delay_ms: 5,
       send_rate_multiplier: 1.0,

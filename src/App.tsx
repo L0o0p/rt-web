@@ -173,14 +173,17 @@ export const App = () => {
   }, []);
 
   const {
+    applySessionLocation,
     applySessionId,
     applyVoicePreset,
     applyWebSocketUrl,
     isSessionIdLocked,
     isSwitchingWs,
     sessionIdInput,
+    sessionLocationInput,
     setSessionIdLock,
     setSessionIdInput,
+    setSessionLocationInput,
     setWsInput,
     setWsPresetId,
     voicePreset,
@@ -734,16 +737,19 @@ export const App = () => {
             isSessionIdLocked={isSessionIdLocked}
             isSwitchingWs={isSwitchingWs}
             sessionIdInput={sessionIdInput}
+            sessionLocationInput={sessionLocationInput}
             voicePreset={voicePreset}
             wsInput={wsInput}
             wsPresetId={wsPresetId}
             wsPresets={WS_PRESETS}
             wsUrl={wsUrl}
+            onApplySessionLocation={applySessionLocation}
             onApplySessionId={applySessionId}
             onApplyVoicePreset={applyVoicePreset}
             onApplyWebSocketUrl={applyWebSocketUrl}
             onSessionIdLockChange={setSessionIdLock}
             onSessionIdInputChange={setSessionIdInput}
+            onSessionLocationInputChange={setSessionLocationInput}
             onWsInputChange={setWsInput}
             onWsPresetChange={setWsPresetId}
           />

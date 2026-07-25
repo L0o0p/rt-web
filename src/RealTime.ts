@@ -5,6 +5,7 @@ import { float32ToPcm16 } from './sdk/audio/AudioUtils';
 import {
     LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY,
     LOCKED_SESSION_ID_STORAGE_KEY,
+    DEFAULT_SESSION_LOCATION,
     VOICE_PRESET_STORAGE_KEY,
     type VoicePreset,
     voiceSettingForPreset,
@@ -43,7 +44,7 @@ export class RealTime {
             asr_language: 'zh',
             mode: 'vad',
             timezone: 'Asia/Shanghai',
-            location: '22.657,114.016',
+            location: DEFAULT_SESSION_LOCATION,
             voice_setting: voiceSettingForPreset(voicePreset)
         };
         this.voiceChatCore = new VoiceChatCore(defaultConfig, lockedSessionId);

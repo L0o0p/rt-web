@@ -7,6 +7,7 @@ import { getRuntimeWebSocketUrl, setStoredWebSocketUrl } from '../sdk/config/run
 import {
   LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY,
   LOCKED_SESSION_ID_STORAGE_KEY,
+  DEFAULT_SESSION_LOCATION,
   VOICE_PRESET_STORAGE_KEY,
   WS_PRESETS,
   type VoicePreset,
@@ -75,6 +76,7 @@ export const useRuntimeControls = ({
   const [wsInput, setWsInput] = useState<string>(initialWsConfig.url);
   const [isSwitchingWs, setIsSwitchingWs] = useState(false);
   const [sessionIdInput, setSessionIdInput] = useState<string>(initialLockedSessionId ?? '');
+  const [sessionLocationInput, setSessionLocationInput] = useState<string>(DEFAULT_SESSION_LOCATION);
   const [isSessionIdLocked, setIsSessionIdLocked] = useState(Boolean(initialLockedSessionId));
 
   useEffect(() => {
@@ -206,15 +208,48 @@ export const useRuntimeControls = ({
     realTimeRef.current?.setSessionConfig?.({ voice_setting });
   }, [realTimeRef]);
 
+  const applySessionLocation = useCallback(() => {
+    const location = sessionLocationInput.trim();
+    if (!location) {
+      alert('请输入经纬度，例如 22.657,114.016');
+      return;
+    }
+
+    const voiceChatCore = realTimeRef.current?.getVoiceChatCore();
+    setSessionLocationInput(location);
+    voiceChatCore?.getConnectionManager().setDefaultSessionConfig({ location });
+
+    if (voiceChatCore?.isConnected) {
+      if (voiceChatCore.isSessionIdLocked) {
+        voiceChatCore.unlockSessionId();
+        try {
+          localStorage.removeItem(LOCKED_SESSION_ID_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        setIsSessionIdLocked(false);
+        setSessionIdInput('');
+      }
+
+      resetPerformanceMonitor('location_switch');
+      realTimeRef.current?.startNewSession?.({ location });
+    }
+
+    console.log('[SESSION] location:update', { location });
+  }, [realTimeRef, resetPerformanceMonitor, sessionLocationInput]);
+
   return {
+    applySessionLocation,
     applySessionId,
     applyVoicePreset,
     applyWebSocketUrl,
     isSessionIdLocked,
     isSwitchingWs,
     sessionIdInput,
+    sessionLocationInput,
     setSessionIdLock,
     setSessionIdInput,
+    setSessionLocationInput,
     setWsInput,
     setWsPresetId,
     voicePreset,

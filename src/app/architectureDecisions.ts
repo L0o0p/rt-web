@@ -11,6 +11,7 @@ export const LEGACY_USE_CUSTOM_VOICE_STORAGE_KEY = 'use_custom_voice';
 export const DEFAULT_VOICE_ID = 'zh_female_wanwanxiaohe_moon_bigtts';
 export const CUSTOM_VOICE_ID = 'ttv-voice-2025120918423925-Ktg6miPT';
 export const LOCKED_SESSION_ID_STORAGE_KEY = 'locked_session_id';
+export const DEFAULT_SESSION_LOCATION = '22.657,114.016';
 
 export type VoicePreset = 'default' | 'soft';
 

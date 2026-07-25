@@ -6,16 +6,19 @@ interface WebSocketSessionControlsProps {
   isSessionIdLocked: boolean;
   isSwitchingWs: boolean;
   sessionIdInput: string;
+  sessionLocationInput: string;
   voicePreset: VoicePreset;
   wsInput: string;
   wsPresetId: WsPresetId;
   wsPresets: readonly WsPreset[];
   wsUrl: string;
+  onApplySessionLocation: () => void;
   onApplySessionId: () => void;
   onApplyVoicePreset: (preset: VoicePreset) => void;
   onApplyWebSocketUrl: (url: string, presetId?: WsPresetId) => Promise<void>;
   onSessionIdLockChange: (locked: boolean) => void;
   onSessionIdInputChange: (value: string) => void;
+  onSessionLocationInputChange: (value: string) => void;
   onWsInputChange: (value: string) => void;
   onWsPresetChange: (presetId: WsPresetId) => void;
 }
@@ -25,16 +28,19 @@ export const WebSocketSessionControls = ({
   isSessionIdLocked,
   isSwitchingWs,
   sessionIdInput,
+  sessionLocationInput,
   voicePreset,
   wsInput,
   wsPresetId,
   wsPresets,
   wsUrl,
+  onApplySessionLocation,
   onApplySessionId,
   onApplyVoicePreset,
   onApplyWebSocketUrl,
   onSessionIdLockChange,
   onSessionIdInputChange,
+  onSessionLocationInputChange,
   onWsInputChange,
   onWsPresetChange,
 }: WebSocketSessionControlsProps) => (
@@ -122,6 +128,28 @@ export const WebSocketSessionControls = ({
         />
         Lock
       </label>
+    </div>
+
+    <div className={styles.wsConfigRow}>
+      <span className={styles.wsConfigLabel}>地址</span>
+      <input
+        value={sessionLocationInput}
+        onChange={(event) => onSessionLocationInputChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onApplySessionLocation();
+        }}
+        placeholder="输入经纬度，如 22.657,114.016"
+        className={styles.wsConfigInput}
+        disabled={isSwitchingWs}
+      />
+      <button
+        type="button"
+        onClick={onApplySessionLocation}
+        disabled={isSwitchingWs}
+        className={styles.wsConfigButton}
+      >
+        Apply
+      </button>
     </div>
 
     <div className={styles.wsConfigRow}>

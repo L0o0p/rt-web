@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import type { RealTime } from '../RealTime';
+import { resolveDeviceCommand } from '../toolCalls/deviceCommand';
 import type { Reminder, ReminderArguments } from '../types/reminder';
 
 interface PendingVisualQa {
@@ -92,9 +93,8 @@ const getVisualQaQuestion = (parsedArgs: unknown): string => {
   return '请描述我面前有什么';
 };
 
-const isTakePhotoIntent = (fnName: string | undefined, callId: string | undefined, argsStr: string): boolean => {
+const isLegacyTakePhotoIntent = (fnName: string | undefined, callId: string | undefined, argsStr: string): boolean => {
   return fnName === 'take_photo' ||
-    fnName === 'device_command' ||
     (typeof callId === 'string' && callId.includes('take_photo')) ||
     (
       ((fnName && String(fnName).includes('device')) || (typeof callId === 'string' && callId.includes('device'))) &&
@@ -110,6 +110,7 @@ export const useToolCallHandler = ({
 }: UseToolCallHandlerOptions) => {
   // Decision: dedupe tool effects by call_id here, not in UI components.
   const takePhotoAckedCallIdsRef = useRef<Set<string>>(new Set());
+  const deviceCommandAckedCallIdsRef = useRef<Set<string>>(new Set());
   const deviceControlAckedCallIdsRef = useRef<Set<string>>(new Set());
   const visualQaTriggeredCallIdsRef = useRef<Set<string>>(new Set());
 
@@ -213,6 +214,48 @@ export const useToolCallHandler = ({
       void handleDeviceControlCall(callId, parsedArgs);
     }
 
+    if (fnName === 'device_command') {
+      if (!callId) {
+        console.warn('[DeviceCommand] call_id 为空，跳过设备命令和 function_call_output 回传');
+        return;
+      }
+      if (deviceCommandAckedCallIdsRef.current.has(callId)) {
+        return;
+      }
+      deviceCommandAckedCallIdsRef.current.add(callId);
+
+      const resolved = resolveDeviceCommand(parsedArgs);
+      if (!resolved) {
+        getConnectionManager(realTimeRef)?.sendFunctionCallOutput?.(callId, {
+          status: 0,
+          error: 'unsupported_or_malformed_device_command',
+        }, {
+          controlMode: 'llm',
+          isError: true,
+        });
+        console.warn('[DeviceCommand] ⚠️ 未知或格式错误的设备命令，已 fail closed:', { callId, parsedArgs });
+        return;
+      }
+
+      const { action, command, opensCamera } = resolved;
+      if (opensCamera) {
+        void openCamera();
+      } else {
+        window.dispatchEvent(new CustomEvent('realtime:device-command', {
+          detail: { callId, command, action },
+        }));
+      }
+
+      getConnectionManager(realTimeRef)?.sendFunctionCallOutput?.(callId, {
+        status: 1,
+        command,
+        action,
+        result: opensCamera ? 'camera_open_requested' : 'device_command_requested',
+      });
+      console.log('[DeviceCommand] ✅ 已按 canonical command 分发设备请求:', { callId, command, action });
+      return;
+    }
+
     if (fnName === 'get_visual_QA') {
       const question = getVisualQaQuestion(parsedArgs);
       console.log(`[Vision] ✅ 识别到视觉问答工具调用${isFallback ? '(备用)' : ''}，准备拍照并走 vision 管线:`, { fnName, callId, question });
@@ -231,7 +274,7 @@ export const useToolCallHandler = ({
       console.log('[Vision] 摄像头打开请求已发出，将自动拍照并发送 ImageData 到 vision 管线');
     }
 
-    if (isTakePhotoIntent(fnName, callId, argsStr)) {
+    if (isLegacyTakePhotoIntent(fnName, callId, argsStr)) {
       console.log(`[Camera] ✅ 识别到拍照意图${isFallback ? '(备用)' : ''}，准备打开摄像头:`, { fnName, callId, parsedArgs });
       void openCamera();
       console.log('[Camera] 摄像头打开请求已发出（若移动端拦截，将出现“点一下授权/打开摄像头”）');

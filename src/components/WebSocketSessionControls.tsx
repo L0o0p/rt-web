@@ -1,8 +1,10 @@
 import styles from '../App.module.scss';
 import type { VoicePreset, WsPreset, WsPresetId } from '../app/architectureDecisions';
+import type { GlassesDeadlineSnapshot } from '../hooks/useGlassesResponseDeadline';
 
 interface WebSocketSessionControlsProps {
   currentSessionId: string;
+  glassesDeadline: GlassesDeadlineSnapshot;
   isSessionIdLocked: boolean;
   isSwitchingWs: boolean;
   sessionIdInput: string;
@@ -16,6 +18,7 @@ interface WebSocketSessionControlsProps {
   onApplySessionId: () => void;
   onApplyVoicePreset: (preset: VoicePreset) => void;
   onApplyWebSocketUrl: (url: string, presetId?: WsPresetId) => Promise<void>;
+  onGlassesDeadlineEnabledChange: (enabled: boolean) => void;
   onSessionIdLockChange: (locked: boolean) => void;
   onSessionIdInputChange: (value: string) => void;
   onSessionLocationInputChange: (value: string) => void;
@@ -25,6 +28,7 @@ interface WebSocketSessionControlsProps {
 
 export const WebSocketSessionControls = ({
   currentSessionId,
+  glassesDeadline,
   isSessionIdLocked,
   isSwitchingWs,
   sessionIdInput,
@@ -38,6 +42,7 @@ export const WebSocketSessionControls = ({
   onApplySessionId,
   onApplyVoicePreset,
   onApplyWebSocketUrl,
+  onGlassesDeadlineEnabledChange,
   onSessionIdLockChange,
   onSessionIdInputChange,
   onSessionLocationInputChange,
@@ -128,6 +133,32 @@ export const WebSocketSessionControls = ({
         />
         Lock
       </label>
+    </div>
+    <div className={styles.wsConfigRow} data-testid="glasses-response-deadline">
+      <span className={styles.wsConfigLabel}>眼镜</span>
+      <label className={styles.wsConfigCheckbox}>
+        <input
+          type="checkbox"
+          checked={glassesDeadline.enabled}
+          disabled={isSwitchingWs}
+          onChange={(event) => onGlassesDeadlineEnabledChange(event.target.checked)}
+        />
+        10s 首音频超时
+      </label>
+      <strong>
+        {glassesDeadline.status === 'waiting'
+          ? `${((glassesDeadline.remainingMs ?? 0) / 1000).toFixed(1)}s`
+          : glassesDeadline.status === 'answered'
+            ? `首音频 ${((glassesDeadline.elapsedMs ?? 0) / 1000).toFixed(2)}s`
+            : glassesDeadline.status === 'timed_out'
+              ? '已超时并断开'
+              : glassesDeadline.status === 'idle'
+                ? '待调用'
+                : '关闭'}
+      </strong>
+      <span>
+        {glassesDeadline.requestType ?? 'StopInput / ImageData'}
+      </span>
     </div>
 
     <div className={styles.wsConfigRow}>

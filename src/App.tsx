@@ -15,6 +15,7 @@ import { useRuntimeControls } from './hooks/useRuntimeControls';
 import { useSessionStatus } from './hooks/useSessionStatus';
 import { useDownstreamAudioPlayer } from './hooks/useDownstreamAudioPlayer';
 import { useLocalVadUplink } from './hooks/useLocalVadUplink';
+import { useGlassesResponseDeadline } from './hooks/useGlassesResponseDeadline';
 import { ReminderPanel } from './components/ReminderPanel';
 import { ImageResponsePanel } from './components/ImageResponsePanel';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
@@ -139,6 +140,10 @@ export const App = () => {
     realTime.current = new RealTime()
 
   }, [])
+  const {
+    setEnabled: setGlassesDeadlineEnabled,
+    snapshot: glassesDeadline,
+  } = useGlassesResponseDeadline({ realTimeRef: realTime });
   const { currentSessionId, sessionStatus } = useSessionStatus({ realTimeRef: realTime });
 
   // 响应速度监控相关状态
@@ -746,6 +751,7 @@ export const App = () => {
           )}
           <WebSocketSessionControls
             currentSessionId={currentSessionId}
+            glassesDeadline={glassesDeadline}
             isSessionIdLocked={isSessionIdLocked}
             isSwitchingWs={isSwitchingWs}
             sessionIdInput={sessionIdInput}
@@ -759,6 +765,7 @@ export const App = () => {
             onApplySessionId={applySessionId}
             onApplyVoicePreset={applyVoicePreset}
             onApplyWebSocketUrl={applyWebSocketUrl}
+            onGlassesDeadlineEnabledChange={setGlassesDeadlineEnabled}
             onSessionIdLockChange={setSessionIdLock}
             onSessionIdInputChange={setSessionIdInput}
             onSessionLocationInputChange={setSessionLocationInput}
